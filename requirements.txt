@@ -3,6 +3,6 @@ ultralytics
 fastapi
 uvicorn
 websockets
-redis
 numpy
 lapx
+requests

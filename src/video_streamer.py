@@ -19,7 +19,6 @@ class VideoStreamer:
             
         self.is_live = str(source).startswith("rtsp://") or str(source).startswith("http://")
         
-        # Configure queue size based on stream type (small for live to minimize latency)
         self.q = queue.Queue(maxsize=30 if not self.is_live else 5) 
         self.stopped = False
 
@@ -40,7 +39,6 @@ class VideoStreamer:
                 return
                 
             if self.is_live:
-                # Live feeds: drop oldest frames if queue is full to maintain 0-latency
                 if self.q.full():
                     try:
                         self.q.get_nowait()
@@ -48,7 +46,6 @@ class VideoStreamer:
                         pass
                 self.q.put(frame)
             else:
-                # Local files: block and wait to ensure no frames are dropped
                 while not self.stopped:
                     try:
                         self.q.put(frame, timeout=0.1)
@@ -58,7 +55,10 @@ class VideoStreamer:
 
     def read(self):
         """Returns the next available frame from the buffer."""
-        return self.q.get()
+        try:
+            return self.q.get(timeout=1.0)
+        except queue.Empty:
+            return None
 
     def stop(self):
         """Signals the thread to terminate and releases resources."""

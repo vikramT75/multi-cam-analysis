@@ -8,7 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen p-8 font-sans">
-
     <div class="max-w-6xl mx-auto">
         <header class="mb-8 border-b border-gray-700 pb-4">
             <h1 class="text-3xl font-bold text-blue-400">Global Multi-Camera Analytics</h1>
@@ -18,7 +17,6 @@
             </div>
         </header>
 
-        <!-- Global KPI -->
         <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 shadow-lg mb-8">
             <h2 class="text-gray-400 text-sm uppercase tracking-wide font-semibold">Total Global Occupancy (All Cameras)</h2>
             <div class="mt-2 flex items-baseline">
@@ -27,13 +25,10 @@
             </div>
         </div>
 
-        <!-- Dynamic Camera Grid -->
         <h2 class="text-gray-400 text-sm uppercase tracking-wide font-semibold mb-4">Active Edge Nodes</h2>
         <div id="camera-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <!-- Camera cards will be dynamically injected here via WebSockets -->
         </div>
 
-        <!-- Live Graph -->
         <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 shadow-lg">
             <h2 class="text-gray-400 text-sm uppercase tracking-wide font-semibold mb-4">Global Network Traffic (Rolling 60s)</h2>
             <div class="h-64">
@@ -43,61 +38,34 @@
     </div>
 
     <script>
-        // --- Chart Setup ---
         const ctx = document.getElementById('trafficChart').getContext('2d');
         const trafficChart = new Chart(ctx, {
             type: 'line',
-            data: {
-                labels: [], 
-                datasets: [{
-                    label: 'Global Occupancy',
-                    data: [],
-                    borderColor: '#3b82f6', 
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    x: { display: false },
-                    y: { beginAtZero: true, grid: { color: '#374151' }, ticks: { color: '#9ca3af', stepSize: 1 } }
-                },
-                plugins: { legend: { display: false } },
-                animation: false 
-            }
+            data: { labels: [], datasets: [{ label: 'Global Occupancy', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderWidth: 2, fill: true, tension: 0.4 }] },
+            options: { responsive: true, maintainAspectRatio: false, scales: { x: { display: false }, y: { beginAtZero: true, grid: { color: '#374151' }, ticks: { color: '#9ca3af', stepSize: 1 } } }, plugins: { legend: { display: false } }, animation: false }
         });
 
-        // --- Multi-Camera Logic ---
         const statusBadge = document.getElementById('connection-status');
         const cameraGrid = document.getElementById('camera-grid');
         const globalOccupancyEl = document.getElementById('global-occupancy');
-        
-        // Dictionary to store the latest state of every unique camera
         const activeCameras = {}; 
         let ws;
 
         function connectWebSocket() {
             ws = new WebSocket("ws://localhost:8000/ws");
-
             ws.onopen = () => {
                 statusBadge.textContent = "🟢 Connected to Central Broker";
                 statusBadge.className = "mt-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800";
             };
-
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                const camName = data.camera; // e.g., "Intersection_Cam_01"
+                const camName = data.camera;
                 
-                // 1. If this is a newly discovered camera, inject a UI Card for it!
                 if (!activeCameras[camName]) {
                     const cardHTML = `
                         <div id="card-${camName}" class="bg-gray-800 rounded-lg p-5 border border-gray-700 shadow-lg transition-all duration-300">
                             <h2 class="text-blue-400 text-sm uppercase tracking-wide font-bold mb-3">${camName}</h2>
-                            <div class="flex justify-between">
+                            <div class="flex justify-between border-b border-gray-700 pb-2 mb-2">
                                 <div>
                                     <p class="text-gray-500 text-xs font-semibold">OCCUPANCY</p>
                                     <p id="occ-${camName}" class="text-3xl font-bold text-white">0</p>
@@ -107,26 +75,25 @@
                                     <p id="tot-${camName}" class="text-3xl font-bold text-blue-400">0</p>
                                 </div>
                             </div>
+                            <div class="flex justify-between items-center">
+                                <p class="text-gray-500 text-xs font-semibold">MAX DWELL</p>
+                                <p id="dwell-${camName}" class="text-sm font-bold text-yellow-400">0.0s</p>
+                            </div>
                         </div>
                     `;
                     cameraGrid.insertAdjacentHTML('beforeend', cardHTML);
                 }
-                
-                // 2. Update the internal state memory
                 activeCameras[camName] = data;
-                
-                // 3. Update the specific UI Card for this camera
                 document.getElementById(`occ-${camName}`).textContent = data.occupancy;
                 document.getElementById(`tot-${camName}`).textContent = data.total_entered;
-                
-                // 4. Calculate Global KPIs across all cameras
-                let globalOcc = 0;
-                for (let cam in activeCameras) {
-                    globalOcc += activeCameras[cam].occupancy;
+                if (data.max_dwell !== undefined) {
+                    document.getElementById(`dwell-${camName}`).textContent = data.max_dwell + "s";
                 }
+                
+                let globalOcc = 0;
+                for (let cam in activeCameras) { globalOcc += activeCameras[cam].occupancy; }
                 globalOccupancyEl.textContent = globalOcc;
                 
-                // 5. Update the Graph
                 const now = new Date().toLocaleTimeString();
                 trafficChart.data.labels.push(now);
                 trafficChart.data.datasets[0].data.push(globalOcc);
@@ -136,14 +103,12 @@
                 }
                 trafficChart.update();
             };
-
             ws.onclose = () => {
                 statusBadge.textContent = "🔴 Disconnected - Reconnecting...";
                 statusBadge.className = "mt-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800";
                 setTimeout(connectWebSocket, 2000); 
             };
         }
-
         connectWebSocket();
     </script>
 </body>

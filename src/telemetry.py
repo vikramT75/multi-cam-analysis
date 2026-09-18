@@ -1,6 +1,7 @@
 import threading
 import queue
 import requests
+import logging
 
 class TelemetrySender:
     """
@@ -15,17 +16,15 @@ class TelemetrySender:
         t.start()
         
     def _worker(self):
-        """Worker thread utilizing a persistent HTTP session for low-latency dispatch."""
         session = requests.Session()
         while True:
             data = self.q.get()
             try:
                 session.post(self.url, json=data, timeout=0.5)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"Telemetry dispatch failed: {e}")
                 
     def send(self, data):
-        """Queues telemetry payload. Drops stale data if queue is saturated."""
         if self.q.full():
             try:
                 self.q.get_nowait()

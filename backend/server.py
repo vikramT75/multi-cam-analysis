@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+import asyncio
 
 app = FastAPI(title="Multi-Camera Analytics API")
 
@@ -10,28 +11,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-connected_clients = set()
+class ConnectionManager:
+    """Thread-safe state management for WebSocket concurrency."""
+    def __init__(self):
+        self.active_connections = set()
+        self.lock = asyncio.Lock()
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        async with self.lock:
+            self.active_connections.add(websocket)
+
+    async def disconnect(self, websocket: WebSocket):
+        async with self.lock:
+            self.active_connections.discard(websocket)
+
+    async def broadcast(self, data: dict):
+        async with self.lock:
+            for connection in list(self.active_connections):
+                try:
+                    await connection.send_json(data)
+                except Exception:
+                    self.active_connections.discard(connection)
+
+manager = ConnectionManager()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for broadcasting real-time analytics to dashboard clients."""
-    await websocket.accept()
-    connected_clients.add(websocket)
+    await manager.connect(websocket)
     try:
         while True:
             await websocket.receive_text() 
     except WebSocketDisconnect:
-        connected_clients.remove(websocket)
+        await manager.disconnect(websocket)
 
 @app.post("/telemetry")
 async def receive_telemetry(data: dict):
-    """Ingests telemetry payloads from edge nodes and broadcasts to connected clients."""
-    for client in list(connected_clients):
-        try:
-            await client.send_json(data)
-        except Exception:
-            connected_clients.remove(client)
-    return {"status": "broadcasted", "clients": len(connected_clients)}
+    await manager.broadcast(data)
+    return {"status": "broadcasted"}
 
 if __name__ == "__main__":
     import uvicorn
