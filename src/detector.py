@@ -1,6 +1,7 @@
 import cv2
 import time
 import yaml
+import argparse
 from ultralytics import YOLO
 from video_streamer import VideoStreamer
 from spatial_analytics import ZoneAnalyzer
@@ -8,8 +9,12 @@ from telemetry import TelemetrySender
 
 def main():
     """Main execution loop for edge inference and analytics."""
+    parser = argparse.ArgumentParser(description="Run Edge Analytics Node")
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to camera configuration file")
+    args = parser.parse_args()
+
     # Load configuration
-    with open("config.yaml", "r") as f:
+    with open(args.config, "r") as f:
         config = yaml.safe_load(f)
         
     print(f"Initializing {config['camera']['name']} Engine...")
