@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edge Analytics Dashboard</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for real-time graphs -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen p-8 font-sans">
+
+    <div class="max-w-6xl mx-auto">
+        <header class="mb-8 border-b border-gray-700 pb-4">
+            <h1 class="text-3xl font-bold text-blue-400">Multi-Camera Edge Analytics</h1>
+            <p class="text-gray-400 text-sm mt-1">Live Telemetry from YOLOv11 & ByteTRACK</p>
+            <div id="connection-status" class="mt-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                Disconnected
+            </div>
+        </header>
+
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 shadow-lg">
+                <h2 class="text-gray-400 text-sm uppercase tracking-wide font-semibold">Current Zone Occupancy</h2>
+                <div class="mt-2 flex items-baseline">
+                    <span id="kpi-occupancy" class="text-5xl font-extrabold text-white">0</span>
+                    <span class="ml-2 text-sm text-gray-500">people</span>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 shadow-lg">
+                <h2 class="text-gray-400 text-sm uppercase tracking-wide font-semibold">Total All-Time Entered</h2>
+                <div class="mt-2 flex items-baseline">
+                    <span id="kpi-total" class="text-5xl font-extrabold text-blue-400">0</span>
+                    <span class="ml-2 text-sm text-gray-500">people</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Graph -->
+        <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 shadow-lg">
+            <h2 class="text-gray-400 text-sm uppercase tracking-wide font-semibold mb-4">Live Occupancy Traffic (Rolling 60s)</h2>
+            <div class="h-64">
+                <canvas id="trafficChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Setup Chart.js ---
+        const ctx = document.getElementById('trafficChart').getContext('2d');
+        const trafficChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [], // Timestamps
+                datasets: [{
+                    label: 'Zone Occupancy',
+                    data: [],
+                    borderColor: '#3b82f6', // Tailwind blue-500
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { display: false }, // Hide x-axis timestamps for clean look
+                    y: { 
+                        beginAtZero: true,
+                        grid: { color: '#374151' }, // gray-700
+                        ticks: { color: '#9ca3af', stepSize: 1 } // gray-400
+                    }
+                },
+                plugins: { legend: { display: false } },
+                animation: false // Turn off animation for smooth real-time flow
+            }
+        });
+
+        // --- 2. Setup WebSockets ---
+        const statusBadge = document.getElementById('connection-status');
+        const kpiOccupancy = document.getElementById('kpi-occupancy');
+        const kpiTotal = document.getElementById('kpi-total');
+        
+        let ws;
+
+        function connectWebSocket() {
+            // Connect to our FastAPI backend
+            ws = new WebSocket("ws://localhost:8000/ws");
+
+            ws.onopen = () => {
+                statusBadge.textContent = "🟢 Connected (Live)";
+                statusBadge.className = "mt-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800";
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                // Update KPI Cards
+                kpiOccupancy.textContent = data.occupancy;
+                kpiTotal.textContent = data.total_entered;
+
+                // Update Chart
+                const now = new Date().toLocaleTimeString();
+                trafficChart.data.labels.push(now);
+                trafficChart.data.datasets[0].data.push(data.occupancy);
+
+                // Keep only the last 60 data points (rolling window)
+                if (trafficChart.data.labels.length > 60) {
+                    trafficChart.data.labels.shift();
+                    trafficChart.data.datasets[0].data.shift();
+                }
+                
+                trafficChart.update();
+            };
+
+            ws.onclose = () => {
+                statusBadge.textContent = "🔴 Disconnected - Reconnecting...";
+                statusBadge.className = "mt-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800";
+                setTimeout(connectWebSocket, 2000); // Try to reconnect
+            };
+        }
+
+        // Start connection
+        connectWebSocket();
+    </script>
+</body>
+</html>
