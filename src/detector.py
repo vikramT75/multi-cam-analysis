@@ -1,5 +1,6 @@
 import cv2
 import time
+import yaml
 from ultralytics import YOLO
 from video_streamer import VideoStreamer
 from spatial_analytics import ZoneAnalyzer
@@ -7,16 +8,22 @@ from telemetry import TelemetrySender
 
 def main():
     """Main execution loop for edge inference and analytics."""
-    print("Initializing Analytics Engine...")
-    model = YOLO("models/yolo11n.pt") 
+    # Load configuration
+    with open("config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+        
+    print(f"Initializing {config['camera']['name']} Engine...")
+    model = YOLO(config['model']['weights']) 
     
-    video_path = "data/sample2.mp4"
-    streamer = VideoStreamer(video_path, "Camera_1").start()
+    streamer = VideoStreamer(config['camera']['source'], config['camera']['name']).start()
     telemetry = TelemetrySender()
     
-    # Define ROI Polygon
-    zone_polygon = [(150, 150), (450, 150), (600, 350), (50, 350)]
-    #zone_polygon = [(300, 200), (900, 200), (1200, 700), (100, 700)]
+    # Load analytics polygon from config
+    zone_polygon = config['analytics']['zone_polygon']
+    classes_to_track = config['analytics']['classes_to_track']
+    conf_thresh = config['model']['confidence_threshold']
+    iou_thresh = config['model']['iou_threshold']
+    
     analyzer = ZoneAnalyzer(zone_polygon)
     
     cv2.namedWindow("Analytics Engine", cv2.WINDOW_NORMAL)
@@ -32,10 +39,9 @@ def main():
             if frame is None:
                 break
                 
-            # Execute object detection and ByteTRACK tracking
-            # Using NMS (iou=0.4) and confidence thresholding (conf=0.5) to prevent ghost detections
+            # Execute object detection and ByteTRACK tracking using config thresholds
             results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False, 
-                                  classes=[0, 1, 2, 3, 5, 7], conf=0.5, iou=0.4)
+                                  classes=classes_to_track, conf=conf_thresh, iou=iou_thresh)
             
             annotated_frame = results[0].plot()
             annotated_frame = analyzer.process_tracks(annotated_frame, results)

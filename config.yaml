@@ -1,0 +1,24 @@
+# ==========================================
+# Edge Analytics Engine Configuration
+# ==========================================
+
+camera:
+  name: "Intersection_Cam_01"
+  source: "data/sample2.mp4"
+
+analytics:
+  # Region of Interest (x, y coordinates)
+  zone_polygon:
+    - [300, 200]
+    - [900, 200]
+    - [1200, 700]
+    - [100, 700]
+  
+  # COCO Class IDs to track (0=Person, 1=Bicycle, 2=Car, 3=Motorcycle, 5=Bus, 7=Truck)
+  classes_to_track: [0, 1, 2, 3, 5, 7]
+
+model:
+  # We use the optimized ONNX engine for edge deployment
+  weights: "models/yolo11n.onnx"
+  confidence_threshold: 0.5
+  iou_threshold: 0.4
