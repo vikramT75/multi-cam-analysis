@@ -6,7 +6,9 @@ import time
 class VideoStreamer:
     """
     Asynchronous video stream reader that handles both local files and live RTSP feeds.
-    Implements a threaded ring buffer to decouple frame extraction from inference latency.
+    Implements a threaded ring buffer. For local files, it paces the reading to 
+    match the video's original FPS and drops frames if the inference loop is slower,
+    perfectly simulating a live real-time IP camera.
     """
     def __init__(self, source, name="Camera"):
         self.source = source
@@ -18,8 +20,11 @@ class VideoStreamer:
             self.fps = 30
             
         self.is_live = str(source).startswith("rtsp://") or str(source).startswith("http://")
+        self.simulate_live = not self.is_live
+        self.target_frame_time = 1.0 / self.fps
         
-        self.q = queue.Queue(maxsize=30 if not self.is_live else 5) 
+        # Small queue size so we always get the most recent frame
+        self.q = queue.Queue(maxsize=5) 
         self.stopped = False
 
     def start(self):
@@ -32,26 +37,28 @@ class VideoStreamer:
     def update(self):
         """Worker thread loop for extracting frames."""
         while not self.stopped:
+            t0 = time.time()
             ret, frame = self.cap.read()
+            
             if not ret:
                 self.q.put(None)
                 self.stop()
                 return
                 
-            if self.is_live:
-                if self.q.full():
-                    try:
-                        self.q.get_nowait()
-                    except queue.Empty:
-                        pass
-                self.q.put(frame)
-            else:
-                while not self.stopped:
-                    try:
-                        self.q.put(frame, timeout=0.1)
-                        break 
-                    except queue.Full:
-                        continue 
+            # Always behave like a live buffer: drop oldest if full
+            if self.q.full():
+                try:
+                    self.q.get_nowait()
+                except queue.Empty:
+                    pass
+            self.q.put(frame)
+
+            # If it's a local file, pace the reading to its natural FPS
+            if self.simulate_live:
+                elapsed = time.time() - t0
+                sleep_time = self.target_frame_time - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
     def read(self):
         """Returns the next available frame from the buffer."""
