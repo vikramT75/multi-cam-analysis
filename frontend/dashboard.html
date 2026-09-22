@@ -62,32 +62,8 @@
 
 <div class="px-8 py-6 max-w-screen-2xl mx-auto space-y-6">
 
-<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-
-    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <p class="text-xs text-gray-500 uppercase tracking-widest font-semibold">Total Footfall</p>
-        <p id="kpi-footfall" class="kpi-value text-4xl font-extrabold text-white mt-2">0</p>
-        <p class="text-xs text-gray-600 mt-1">unique entries via Entrance</p>
-    </div>
-
-    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <p class="text-xs text-gray-500 uppercase tracking-widest font-semibold">Shop Conversion</p>
-        <p id="kpi-conversion" class="kpi-value text-4xl font-extrabold text-orange-400 mt-2">—</p>
-        <p class="text-xs text-gray-600 mt-1">% who enter the Shop</p>
-    </div>
-
-    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <p class="text-xs text-gray-500 uppercase tracking-widest font-semibold">Kiosk Engagement</p>
-        <p id="kpi-browse" class="kpi-value text-4xl font-extrabold text-yellow-400 mt-2">—</p>
-        <p class="text-xs text-gray-600 mt-1">% who stop at the Kiosk</p>
-    </div>
-
-    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <p class="text-xs text-gray-500 uppercase tracking-widest font-semibold">Avg Seating Dwell</p>
-        <p id="kpi-queue" class="kpi-value text-4xl font-extrabold text-cyan-400 mt-2">—</p>
-        <p class="text-xs text-gray-600 mt-1">avg rest time near tree</p>
-    </div>
-
+<div id="kpi-container" class="space-y-6">
+    <!-- Dynamically populated by JS per camera -->
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -116,7 +92,7 @@
                         <span class="w-3 h-3 rounded-sm" style="background:#00ff96"></span> Entrance
                     </div>
                     <div class="flex items-center gap-1.5 text-xs text-gray-400">
-                        <span class="w-3 h-3 rounded-sm" style="background:#ffd700"></span> Kiosk
+                        <span class="w-3 h-3 rounded-sm" style="background:#ffd700"></span> Stall
                     </div>
                     <div class="flex items-center gap-1.5 text-xs text-gray-400">
                         <span class="w-3 h-3 rounded-sm" style="background:#00c8ff"></span> Seating
@@ -149,7 +125,7 @@
 <div>
     <div class="flex items-center justify-between mb-3">
         <h2 class="text-xs text-gray-500 uppercase tracking-widest font-semibold">
-            Zone Traffic — Rolling 60 minutes
+            Zone Traffic — Rolling Window
         </h2>
         <div id="chart-legend" class="flex gap-4 text-xs text-gray-400">
             
@@ -177,13 +153,13 @@
 "use strict";
 
 const WS_URL     = "ws://localhost:8000/ws";
-const ZONE_ORDER = ["Entrance", "Aisle", "Kiosk", "Seating", "Shop_Entry",
+const ZONE_ORDER = ["Entrance", "Aisle", "Stall", "Seating", "Shop_Entry",
                     "Cups", "Pots", "Plates", "Bowls"];
 const ZONE_COLORS = {
 
     "Entrance":   "#00ff96",
     "Aisle":      "#ffc800",
-    "Kiosk":      "#ffd700",
+    "Stall":      "#ffd700",
     "Seating":    "#00c8ff",
     "Shop_Entry": "#ff6400",
 
@@ -338,19 +314,69 @@ function updateKPIs() {
         if (z._count > 0) z.avg_dwell /= z._count;
     }
 
-    const footfall = aggregated["Entrance"]?.total_entered ?? 0;
-    document.getElementById("kpi-footfall").textContent = footfall.toLocaleString();
+    const kpiContainer = document.getElementById("kpi-container");
+    if (!kpiContainer) return aggregated;
 
-    const shopVisitors = aggregated["Shop_Entry"]?.total_entered ?? 0;
-    const convEl       = document.getElementById("kpi-conversion");
-    convEl.textContent = footfall > 0 ? `${((shopVisitors / footfall) * 100).toFixed(1)}%` : "—";
+    for (const [camName, camData] of Object.entries(cameraStates)) {
+        if (!camData.zones) continue;
 
-    const kioskVisitors = aggregated["Kiosk"]?.total_entered ?? 0;
-    const browseEl      = document.getElementById("kpi-browse");
-    browseEl.textContent = footfall > 0 ? `${((kioskVisitors / footfall) * 100).toFixed(1)}%` : "—";
+        let stripWrapper = document.getElementById(`kpi-wrapper-${camName}`);
+        if (!stripWrapper) {
+            stripWrapper = document.createElement("div");
+            stripWrapper.id = `kpi-wrapper-${camName}`;
+            stripWrapper.innerHTML = `
+                <h2 class="text-xs text-gray-500 uppercase tracking-widest font-semibold mb-3">${camName} Dwell Times</h2>
+                <div id="kpi-strip-${camName}" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4"></div>
+            `;
+            kpiContainer.appendChild(stripWrapper);
+        }
 
-    const queueEl = document.getElementById("kpi-queue");
-    queueEl.textContent = fmtSeconds(aggregated["Seating"]?.avg_dwell);
+        const kpiStrip = document.getElementById(`kpi-strip-${camName}`);
+        
+        const allZones = Object.keys(camData.zones);
+        const ordered = ZONE_ORDER.filter(z => allZones.includes(z));
+        for (const z of allZones) { if (!ordered.includes(z)) ordered.push(z); }
+
+        for (const zone of ordered) {
+            const metrics = camData.zones[zone];
+            
+            const cardId = `kpi-card-${camName}-${zone}`;
+            let card = document.getElementById(cardId);
+            
+            if (!card) {
+                card = document.createElement("div");
+                card.id = cardId;
+                card.className = "bg-gray-900 border border-gray-800 rounded-xl p-5";
+                card.innerHTML = `
+                    <p class="text-[11px] uppercase tracking-widest font-semibold" style="color: ${zoneColor(zone)}">${zone} Dwell</p>
+                    <p id="kpi-val-${camName}-${zone}" class="kpi-value text-3xl font-extrabold text-white mt-2">—</p>
+                    <p class="text-[11px] text-gray-500 mt-1">avg time spent</p>
+                `;
+                kpiStrip.appendChild(card);
+            }
+            
+            const valEl = document.getElementById(`kpi-val-${camName}-${zone}`);
+            const newDwell = fmtSeconds(metrics.avg_dwell);
+            
+            if (valEl.textContent !== newDwell) {
+                valEl.textContent = newDwell;
+            }
+        }
+        
+        Array.from(kpiStrip.children).forEach(child => {
+            const zoneName = child.id.replace(`kpi-card-${camName}-`, '');
+            if (!camData.zones[zoneName]) {
+                kpiStrip.removeChild(child);
+            }
+        });
+    }
+
+    Array.from(kpiContainer.children).forEach(child => {
+        const cName = child.id.replace('kpi-wrapper-', '');
+        if (!cameraStates[cName]) {
+            kpiContainer.removeChild(child);
+        }
+    });
 
     return aggregated;
 }

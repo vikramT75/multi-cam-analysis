@@ -47,7 +47,7 @@ src/telemetry.py  ──────────────────►  bac
                                         ├── KPI strip (footfall, conversion, dwell, queue)
                                         ├── Per-camera zone cards with alert badges
                                         ├── D3 Sankey conversion flow diagram
-                                        └── Chart.js rolling 60-min zone traffic chart
+                                        └── Chart.js rolling window zone traffic chart
 ```
 
 ## Quick Start

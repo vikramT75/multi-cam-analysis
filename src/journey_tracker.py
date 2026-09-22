@@ -19,7 +19,7 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-ZONE_ORDER = ["Entrance", "Kiosk", "Seating", "Shop_Entry",
+ZONE_ORDER = ["Entrance", "Stall", "Seating", "Shop_Entry",
               "Pots", "Cups", "Plates", "Bowls"]
 
 class JourneyTracker:

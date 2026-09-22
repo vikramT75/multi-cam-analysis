@@ -45,6 +45,9 @@ class ZoneAnalyzer:
                 "all_time_entered": set(),
                 "entry_times":    {},
                 "dwell_times":    {},
+                "total_completed_dwell": 0.0,
+                "completed_visits": 0,
+                "historical_max_dwell": 0.0,
                 "heatmap":        None,
             }
 
@@ -122,6 +125,12 @@ class ZoneAnalyzer:
 
             for tid in list(zdata["entry_times"]):
                 if tid not in occ:
+                    final_dwell = zdata["dwell_times"].get(tid, 0.0)
+                    zdata["total_completed_dwell"] += final_dwell
+                    zdata["completed_visits"] += 1
+                    if final_dwell > zdata["historical_max_dwell"]:
+                        zdata["historical_max_dwell"] = final_dwell
+                        
                     zdata["entry_times"].pop(tid, None)
                     zdata["dwell_times"].pop(tid, None)
 
@@ -183,7 +192,9 @@ class ZoneAnalyzer:
                 occ       = len(zdata["occupants"])
                 total     = len(zdata["all_time_entered"])
                 dwells    = list(zdata["dwell_times"].values())
-                avg_dwell = sum(dwells) / occ if occ > 0 else 0.0
+                total_time = zdata["total_completed_dwell"] + sum(dwells)
+                total_visitors = zdata["completed_visits"] + occ
+                avg_dwell = total_time / total_visitors if total_visitors > 0 else 0.0
 
                 label = f"{zone_name}: {occ:>2} in | {total:>3} total | avg {avg_dwell:.0f}s"
                 y = 28 + i * row_h
@@ -213,11 +224,19 @@ class ZoneAnalyzer:
         for zone_name, zdata in self._zones.items():
             occ    = len(zdata["occupants"])
             dwells = list(zdata["dwell_times"].values())
+            
+            total_time = zdata["total_completed_dwell"] + sum(dwells)
+            total_visitors = zdata["completed_visits"] + occ
+            avg = total_time / total_visitors if total_visitors > 0 else 0.0
+            
+            current_max = max(dwells) if dwells else 0.0
+            overall_max = max(zdata["historical_max_dwell"], current_max)
+            
             states[zone_name] = {
                 "occupancy":     occ,
                 "total_entered": len(zdata["all_time_entered"]),
-                "avg_dwell":     round(sum(dwells) / occ, 1) if occ > 0 else 0.0,
-                "max_dwell":     round(max(dwells), 1)       if dwells else 0.0,
+                "avg_dwell":     round(avg, 1),
+                "max_dwell":     round(overall_max, 1),
             }
         return states
 
