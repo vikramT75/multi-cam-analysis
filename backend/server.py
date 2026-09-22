@@ -29,7 +29,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from reid_manager import ReIDManager
+
 DB_PATH = Path("data/analytics.db")
+reid_manager = ReIDManager()
 
 MAX_ROWS_PER_CAMERA = 7_200
 
@@ -178,6 +181,21 @@ async def receive_telemetry(data: dict):
     """
     camera    = data.get("camera", "unknown")
     timestamp = data.get("timestamp", time.time())
+
+    signatures = data.get("signatures", {})
+    track_zones = data.get("track_zones", {})
+
+    if signatures:
+        reid_manager.resolve_identities(camera, signatures)
+    if track_zones:
+        reid_manager.update_global_journeys(camera, track_zones)
+
+    data["global_funnel"] = reid_manager.get_global_funnel()
+    data["global_transitions"] = reid_manager.get_global_transitions()
+
+    # Strip heavy data before DB insertion and WebSocket broadcast to prevent timeouts!
+    data.pop("signatures", None)
+    data.pop("track_zones", None)
 
     latest_state[camera] = data
 

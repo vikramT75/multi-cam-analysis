@@ -23,6 +23,7 @@ from video_streamer import VideoStreamer
 from spatial_analytics import ZoneAnalyzer
 from journey_tracker import JourneyTracker
 from telemetry import TelemetrySender
+from reid_extractor import ReIDExtractor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,16 +57,20 @@ def main():
     telemetry = TelemetrySender()
     analyzer  = ZoneAnalyzer(zone_configs)
     journey   = JourneyTracker([z["name"] for z in zone_configs])
+    reid_extractor = ReIDExtractor()
 
     window_title = f"Retail Intelligence - {cam_name}"
     target_frame_time = 1.0 / streamer.fps
     logger.info("Inference started. Press 'q' to quit, 'i' to toggle HUD.")
     first_frame = True
     show_hud = True
+    frame_count = 0
+    active_signatures = {}
 
     try:
         while True:
             t0 = time.time()
+            frame_count += 1
 
             frame = streamer.read()
             if frame is None:
@@ -82,6 +87,17 @@ def main():
                 iou=iou_thresh,
             )
 
+            # ReID extraction periodically
+            signatures_to_send = {}
+            if frame_count % 15 == 0 and results and len(results) > 0 and results[0].boxes is not None and results[0].boxes.id is not None:
+                boxes = results[0].boxes.xyxy.cpu().numpy()
+                track_ids = results[0].boxes.id.int().cpu().tolist()
+                
+                embeddings = reid_extractor.extract(frame, boxes)
+                for tid, emb in zip(track_ids, embeddings):
+                    active_signatures[tid] = emb
+                    signatures_to_send[tid] = emb
+
             annotated = results[0].plot()
             track_zone_map = analyzer.process_tracks(annotated, results)
             journey.update(track_zone_map)
@@ -97,10 +113,12 @@ def main():
                 "camera":      cam_name,
                 "timestamp":   time.time(),
                 "zones":       analyzer.get_zone_states(),
+                "track_zones": track_zone_map,
                 "funnel":      journey.get_funnel(),
                 "transitions": journey.get_transitions(),
                 "sankey":      journey.get_sankey_data(),
                 "alerts":      analyzer.get_alerts(),
+                "signatures":  signatures_to_send,
             })
 
             elapsed    = time.time() - t0
