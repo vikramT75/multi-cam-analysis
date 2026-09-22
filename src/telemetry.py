@@ -20,7 +20,7 @@ class TelemetrySender:
         while True:
             data = self.q.get()
             try:
-                session.post(self.url, json=data, timeout=0.5)
+                session.post(self.url, json=data, timeout=3.0)
             except Exception as e:
                 logging.warning(f"Telemetry dispatch failed: {e}")
                 

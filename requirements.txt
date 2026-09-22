@@ -7,3 +7,4 @@ numpy>=1.26.0
 lapx>=0.5.9
 pyyaml>=6.0.2
 requests>=2.32.0
+torchvision>=0.17.0

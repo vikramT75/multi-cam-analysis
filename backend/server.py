@@ -58,27 +58,24 @@ def init_db() -> None:
     conn.commit()
     conn.close()
 
+_insert_counter: dict[str, int] = {}
+PRUNE_EVERY = 100   # run the expensive DELETE query once per N inserts per camera
+
 def db_insert(camera: str, timestamp: float, payload_json: str) -> None:
-    """Persist one telemetry record and prune oldest rows for this camera."""
+    """Persist one telemetry record; prune oldest rows every PRUNE_EVERY inserts."""
     conn = _db_connect()
     conn.execute(
         "INSERT INTO telemetry (camera, timestamp, payload) VALUES (?, ?, ?)",
         (camera, timestamp, payload_json),
     )
 
-    conn.execute(
-        """
-        DELETE FROM telemetry
-        WHERE camera = ?
-          AND id NOT IN (
-              SELECT id FROM telemetry
-              WHERE camera = ?
-              ORDER BY timestamp DESC
-              LIMIT ?
-          )
-        """,
-        (camera, camera, MAX_ROWS_PER_CAMERA),
-    )
+    _insert_counter[camera] = _insert_counter.get(camera, 0) + 1
+    if _insert_counter[camera] % PRUNE_EVERY == 0:
+        conn.execute(
+            "DELETE FROM telemetry WHERE camera = ? AND timestamp < ?",
+            (camera, timestamp - 7200),  # 2 hours
+        )
+
     conn.commit()
     conn.close()
 
@@ -141,7 +138,7 @@ async def lifespan(app: FastAPI):
     init_db()
     yield
 
-app = FastAPI(title="Retail Store Intelligence API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Multi Cam Analysis API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -190,10 +187,11 @@ async def receive_telemetry(data: dict):
     if track_zones:
         reid_manager.update_global_journeys(camera, track_zones)
 
-    data["global_funnel"] = reid_manager.get_global_funnel()
-    data["global_transitions"] = reid_manager.get_global_transitions()
+    data["global_funnel"]        = reid_manager.get_global_funnel()
+    data["global_transitions"]   = reid_manager.get_global_transitions()
+    data["cross_camera_count"]   = reid_manager.get_cross_camera_count()
 
-    # Strip heavy data before DB insertion and WebSocket broadcast to prevent timeouts!
+    # Strip heavy data before DB insertion and WebSocket broadcast
     data.pop("signatures", None)
     data.pop("track_zones", None)
 

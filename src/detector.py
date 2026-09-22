@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def main():
-    parser = argparse.ArgumentParser(description="Retail Intelligence Edge Node")
+    parser = argparse.ArgumentParser(description="Multi Cam Analysis Edge Node")
     parser.add_argument(
         "--config", type=str, default="config.yaml",
         help="Path to camera configuration file (default: config.yaml)"
@@ -49,7 +49,7 @@ def main():
     conf_thresh   = config["model"]["confidence_threshold"]
     iou_thresh    = config["model"]["iou_threshold"]
 
-    logger.info("Initialising Retail Intelligence node: %s", cam_name)
+    logger.info("Initialising Multi Cam Analysis node: %s", cam_name)
     logger.info("Zones: %s", [z["name"] for z in zone_configs])
 
     model     = YOLO(config["model"]["weights"])
@@ -59,7 +59,7 @@ def main():
     journey   = JourneyTracker([z["name"] for z in zone_configs])
     reid_extractor = ReIDExtractor()
 
-    window_title = f"Retail Intelligence - {cam_name}"
+    window_title = f"Multi Cam Analysis - {cam_name}"
     target_frame_time = 1.0 / streamer.fps
     logger.info("Inference started. Press 'q' to quit, 'i' to toggle HUD.")
     first_frame = True

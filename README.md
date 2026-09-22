@@ -1,110 +1,179 @@
-# Retail Store Intelligence Platform
+# Multi-Camera Analytics
 
-> A production-grade, multi-camera computer vision analytics system that transforms
-> raw object-tracking data into real-time retail business intelligence.
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python) ![YOLOv11](https://img.shields.io/badge/YOLO-v11-darkgreen?logo=yolo) ![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi) ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch)
+
+A real-time, multi-camera people-tracking and analytics system. Each camera runs an independent edge inference pipeline (YOLOv11 + ByteTrack + polygon zone analytics + MobileNetV2 ReID embeddings) and streams telemetry to a central FastAPI server that performs cross-camera re-identification, persists data to SQLite, and broadcasts live updates to a WebSocket-driven dashboard.
 
 ---
 
-## Overview
-
-This system ingests asynchronous video streams from multiple IP cameras, runs
-**YOLOv11 ONNX inference + ByteTRACK multi-target tracking** at the edge, performs
-**multi-zone spatial analytics**, and streams structured business metrics to a
-decoupled real-time dashboard — all with sub-second latency.
-
-## Business Metrics Produced
-
-| Metric | Description |
-|---|---|
-| **Footfall** | Unique entries into the Entrance zone |
-| **Conversion Rate** | % of entrants who reach the Checkout zone |
-| **Avg Browse Time** | Mean dwell time in the Aisle zone |
-| **Queue Wait Time** | Mean dwell time in the Checkout zone |
-| **Loitering Alerts** | Any track exceeding the zone's alert threshold |
-| **Dwell Heatmaps** | Per-zone thermal overlays on the live video feed |
-| **Sankey Flow** | D3 diagram showing the Entrance → Aisle → Checkout journey |
-
 ## Architecture
 
-```
-config.yaml / config_cam2.yaml          (Zone definitions per camera)
-        │
-        ▼
-src/video_streamer.py                   (Threaded ring-buffer ingestion)
-src/detector.py           ──────────►  src/spatial_analytics.py (Multi-zone)
-                                        src/journey_tracker.py   (Funnel engine)
-        │
-        ▼
-src/telemetry.py  ──────────────────►  backend/server.py
-                                        ├── WebSocket /ws      (Live broadcast)
-                                        ├── POST /telemetry    (Edge node ingest)
-                                        ├── GET  /snapshot     (Cold-start hydration)
-                                        ├── GET  /history      (SQLite time-series)
-                                        └── GET  /cameras      (Active node list)
-                                              │
-                                              ▼
-                                        frontend/dashboard.html
-                                        ├── KPI strip (footfall, conversion, dwell, queue)
-                                        ├── Per-camera zone cards with alert badges
-                                        ├── D3 Sankey conversion flow diagram
-                                        └── Chart.js rolling window zone traffic chart
+```mermaid
+flowchart LR
+    subgraph Edge["Edge Nodes"]
+        C1["Entrance_Cam\ndetector.py\nYOLOv11 · ByteTrack\nZoneAnalyzer · ReIDExtractor"]
+        C2["Aisle_Cam\ndetector.py\nYOLOv11 · ByteTrack\nZoneAnalyzer · ReIDExtractor"]
+    end
+
+    subgraph Server["Central Server (FastAPI)"]
+        T["/telemetry\nPOST"]
+        RM["ReIDManager\nCosine Similarity Gallery\nEMA Update · Global Journeys"]
+        DB["SQLite WAL\nPersistence"]
+        WS["WebSocket /ws\nBroadcast"]
+    end
+
+    subgraph Frontend["Dashboard"]
+        D["dashboard.html\nChart.js · Zone Cards\nAlert Panel"]
+    end
+
+    C1 -- "HTTP POST telemetry\n(tracks, zones, signatures)" --> T
+    C2 -- "HTTP POST telemetry\n(tracks, zones, signatures)" --> T
+    T --> RM
+    RM --> DB
+    RM --> WS
+    WS --> D
 ```
 
-## Quick Start
+---
+
+## Core Components
+
+### Edge Inference (`src/`)
+
+| Module | Role |
+|---|---|
+| [`detector.py`](src/detector.py) | Top-level pipeline per camera; orchestrates all edge components |
+| YOLOv11 (`.onnx`) | Object detection — people only (`class 0`) |
+| ByteTrack | Multi-object tracking; assigns stable per-camera track IDs across frames |
+| [`spatial_analytics.py`](src/spatial_analytics.py) — `ZoneAnalyzer` | Polygon zone membership, per-track dwell time, occupancy counts, dwell-threshold alerts |
+| [`journey_tracker.py`](src/journey_tracker.py) — `JourneyTracker` | Per-camera zone transition tracking; builds funnel and Sankey diagram data |
+| [`reid_extractor.py`](src/reid_extractor.py) — `ReIDExtractor` | MobileNetV2 (classifier head replaced with `Identity`); extracts 1280-d L2-normalised embeddings from person bounding-box crops every 15 frames; returns JSON-serialisable lists |
+| [`telemetry.py`](src/telemetry.py) — `TelemetrySender` | Background-thread HTTP POST to the FastAPI server |
+| [`video_streamer.py`](src/video_streamer.py) — `VideoStreamer` | Threaded ring-buffer; decouples frame capture from inference |
+
+Each camera is configured independently via its own YAML file (see [Configuration Schema](#configuration-schema)).
+
+---
+
+### Central Server (`backend/`)
+
+| Module | Role |
+|---|---|
+| [`server.py`](backend/server.py) | FastAPI application; receives telemetry, drives ReIDManager, manages WebSocket connections |
+| [`reid_manager.py`](backend/reid_manager.py) — `ReIDManager` | Maintains a cross-camera gallery of `{global_id → embedding}`; matches incoming embeddings via cosine similarity; assigns new global IDs or merges existing ones; tracks global zone transitions |
+| SQLite (WAL mode) | Persists telemetry snapshots and history for cold-start hydration and time-series queries |
+
+---
+
+### Presentation (`frontend/`)
+
+| File | Role |
+|---|---|
+| [`dashboard.html`](frontend/dashboard.html) | Single-page dashboard; WebSocket client; Chart.js rolling occupancy chart; dynamic per-camera zone cards; alert panel |
+
+---
+
+## ReID Pipeline
+
+Cross-camera person re-identification is performed in five stages:
+
+1. **Embedding extraction** — On the edge node, `ReIDExtractor` crops each tracked bounding box and passes it through a headless MobileNetV2 network (ImageNet pre-trained, classifier replaced with `nn.Identity`). The resulting 1280-dimensional feature vector is L2-normalised. Extraction runs every **15 frames** per track to balance accuracy and throughput.
+
+2. **Telemetry transmission** — The normalised embedding is serialised as a JSON list and included in the `signatures` field of the telemetry payload POSTed to `/telemetry`.
+
+3. **Gallery matching** — The server's `ReIDManager` computes **cosine similarity** between the incoming embedding and every embedding in the cross-camera gallery.
+
+4. **Identity assignment** — If the best cosine similarity score exceeds the **0.85 threshold**, the track is matched to the existing `global_id`. Otherwise a new `global_id` is minted and added to the gallery.
+
+5. **Gallery update (EMA blending)** — On a successful match the gallery embedding is updated with Exponential Moving Average:
+
+   $$e_{\text{gallery}} \leftarrow 0.8 \cdot e_{\text{gallery}} + 0.2 \cdot e_{\text{new}}$$
+
+   This keeps the reference stable while slowly adapting to appearance changes. Cross-camera matches are logged as ReID events and used to build global zone-transition journeys.
+
+---
+
+## API Specification
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `WS` | `/ws` | WebSocket — live analytics broadcast to the dashboard |
+| `POST` | `/telemetry` | Ingest telemetry from edge nodes (tracks, zone states, ReID embeddings) |
+| `GET` | `/snapshot` | Full current state for cold-start dashboard hydration |
+| `GET` | `/history?camera=X&minutes=60` | Time-series occupancy data from SQLite |
+| `GET` | `/cameras` | List of active cameras seen by the server |
+
+---
+
+## Deployment Guide
+
+### 1 — Install dependencies
 
 ```bash
-# Terminal 1 — WebSocket broker + REST API
-python backend/server.py
-
-# Terminal 2 — Camera 1: Entrance + Checkout zones (sample.mp4)
-python src/detector.py --config config.yaml
-
-# Terminal 3 — Camera 2: Aisle zone (sample2.mp4)
-python src/detector.py --config config_cam2.yaml
-
-# Open the dashboard
-# Open frontend/dashboard.html in any modern browser
+pip install -r requirements.txt
 ```
 
-## Configuration
+### 2 — Start the central server
 
-Edit `config.yaml` (or `config_cam2.yaml`) to define zones for each camera.
-Each zone needs a name, colour, polygon, and an optional alert threshold:
+```bash
+uvicorn backend.server:app --host 0.0.0.0 --port 8000
+```
+
+### 3 — Launch edge detectors (one per camera)
+
+```bash
+python src/detector.py --config config.yaml
+python src/detector.py --config config_cam2.yaml
+```
+
+### 4 — Open the dashboard
+
+Navigate to `frontend/dashboard.html` in a browser (or serve it from any static file server). The page connects to the WebSocket at `ws://localhost:8000/ws` automatically.
+
+---
+
+## Configuration Schema
+
+Each camera is described by a YAML file. Below is the current configuration for **Entrance_Cam** (640 × 480 @ 6 fps):
 
 ```yaml
+camera:
+  name: "Entrance_Cam"
+  source: "data/cam1_mall_entrance.mp4"
+
 analytics:
+  classes_to_track: [0]          # 0 = person (COCO)
   zones:
     - name: "Entrance"
-      color: [0, 255, 150]          # RGB
-      alert_dwell_seconds: 120      # Loitering alert after 2 minutes
+      color: [0, 255, 150]
+      alert_dwell_seconds: 180
       polygon:
-        - [30,  380]
-        - [420, 380]
-        - [420, 700]
-        - [30,  700]
+        - [60,  90]
+        - [540, 90]
+        - [540, 280]
+        - [60,  280]
+    - name: "Shop_Entry"
+      color: [255, 100, 0]
+      alert_dwell_seconds: 300
+      polygon:
+        - [548, 110]
+        - [640, 110]
+        - [640, 300]
+        - [548, 300]
+
+model:
+  weights: "models/yolo11n.onnx"
+  confidence_threshold: 0.45
+  iou_threshold: 0.4
 ```
 
-Polygon coordinates are pixel values relative to the camera's resolution.
-Use a tool like [labelme](https://github.com/labelmeai/labelme) to draw zones
-visually, then paste the coordinates into `config.yaml`.
+**Aisle_Cam** (cam2) follows the same schema with zones mapped to product-category displays: `Pots`, `Cups`, `Plates`, and `Bowls`.
 
-## Data Persistence
+---
 
-Telemetry is persisted to `data/analytics.db` (SQLite). The server retains
-the last **2 hours** of data per camera (~7,200 rows). History is queryable via:
+## Camera Footage
 
-```
-GET http://localhost:8000/history?camera=Entrance_Cam&minutes=60
-```
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Inference | YOLOv11n ONNX + Ultralytics |
-| Tracking | ByteTRACK (via Ultralytics) |
-| Video I/O | OpenCV + threaded ring buffer |
-| Spatial math | NumPy + OpenCV point-in-polygon |
-| Broker | FastAPI + WebSocket |
-| Persistence | SQLite (stdlib `sqlite3`) |
-| Dashboard | Tailwind CSS + Chart.js + D3 Sankey |
+| Camera | Dataset | Resolution | FPS | Zones |
+|---|---|---|---|---|
+| `Entrance_Cam` | CUHK Mall Dataset | 640 × 480 | 6 | Entrance, Stall, Seating, Shop_Entry |
+| `Aisle_Cam` | Intel IoT Store-Aisle-Detection | 720 × 404 | 15 | Pots, Cups, Plates, Bowls |

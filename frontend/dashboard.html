@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Retail Store Intelligence</title>
+    <title>Multi Cam Analysis</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -63,7 +63,7 @@
     >
       <div>
         <h1 class="text-2xl font-bold text-white tracking-tight">
-          🏪 Retail Store Intelligence
+          Multi Cam Analysis
         </h1>
         <p class="text-xs text-gray-500 mt-0.5">Multi-camera edge analytics</p>
       </div>
@@ -88,7 +88,7 @@
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div class="lg:col-span-2 space-y-4">
+        <div class="lg:col-span-3 space-y-4">
           <h2
             class="text-xs text-gray-500 uppercase tracking-widest font-semibold"
           >
@@ -97,7 +97,8 @@
           <div id="camera-grid" class="space-y-4"></div>
         </div>
 
-        <div class="lg:col-span-1">
+        <!-- Hidden for now: Sankey diagram will be re-enabled later -->
+        <div class="lg:col-span-1 hidden">
           <h2
             class="text-xs text-gray-500 uppercase tracking-widest font-semibold mb-3"
           >
@@ -206,8 +207,6 @@
         <div id="alert-list" class="space-y-2"></div>
       </div>
     </div>
-
-    <div id="sankey-tooltip"></div>
 
     <script>
       "use strict";
@@ -780,7 +779,9 @@
 
         updateKPIs();
 
-        renderSankey();
+        // Only render Sankey when its panel is visible (not hidden)
+        const sankeyPanel = document.getElementById("sankey-svg")?.closest(".hidden");
+        if (!sankeyPanel) renderSankey();
 
         updateAlerts(camName, data.alerts);
 
@@ -833,7 +834,10 @@
       let resizeTimer;
       window.addEventListener("resize", () => {
         clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(renderSankey, 150);
+        resizeTimer = setTimeout(() => {
+          const sankeyPanel = document.getElementById("sankey-svg")?.closest(".hidden");
+          if (!sankeyPanel) renderSankey();
+        }, 150);
       });
     </script>
   </body>
