@@ -1,8 +1,161 @@
+"""
+server.py
+─────────
+Retail Store Intelligence — Central Analytics Broker
+
+Receives telemetry from edge inference nodes over HTTP POST, persists it
+to SQLite, and broadcasts live updates to dashboard clients over WebSocket.
+
+Endpoints:
+    WS  /ws                        Real-time broadcast to dashboard
+    POST /telemetry                Ingest from edge nodes
+    GET  /snapshot                 Latest state for all cameras (dashboard cold-start)
+    GET  /history?camera=X&minutes=60   Time-series from SQLite
+    GET  /cameras                  List of known active cameras
+
+Run:
+    python backend/server.py
+"""
+
+import asyncio
+import json
+import sqlite3
+import time
+from collections import defaultdict
+from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio
+from fastapi.responses import JSONResponse
 
-app = FastAPI(title="Multi-Camera Analytics API")
+# ─── SQLite setup ─────────────────────────────────────────────────────────────
+
+DB_PATH = Path("data/analytics.db")
+# Max rows retained per camera (~2 hours at ~1 telemetry/sec)
+MAX_ROWS_PER_CAMERA = 7_200
+
+
+def _db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")   # Better concurrent read performance
+    return conn
+
+
+def init_db() -> None:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = _db_connect()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS telemetry (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera    TEXT    NOT NULL,
+            timestamp REAL    NOT NULL,
+            payload   TEXT    NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_camera_ts ON telemetry (camera, timestamp)"
+    )
+    conn.commit()
+    conn.close()
+
+
+def db_insert(camera: str, timestamp: float, payload_json: str) -> None:
+    """Persist one telemetry record and prune oldest rows for this camera."""
+    conn = _db_connect()
+    conn.execute(
+        "INSERT INTO telemetry (camera, timestamp, payload) VALUES (?, ?, ?)",
+        (camera, timestamp, payload_json),
+    )
+    # Keep only the most recent MAX_ROWS_PER_CAMERA rows per camera
+    conn.execute(
+        """
+        DELETE FROM telemetry
+        WHERE camera = ?
+          AND id NOT IN (
+              SELECT id FROM telemetry
+              WHERE camera = ?
+              ORDER BY timestamp DESC
+              LIMIT ?
+          )
+        """,
+        (camera, camera, MAX_ROWS_PER_CAMERA),
+    )
+    conn.commit()
+    conn.close()
+
+
+def db_fetch_history(camera: str, minutes: int) -> list:
+    """Return time-series rows for a camera covering the last N minutes."""
+    since = time.time() - minutes * 60
+    conn  = _db_connect()
+    rows  = conn.execute(
+        """
+        SELECT timestamp, payload
+        FROM   telemetry
+        WHERE  camera = ? AND timestamp > ?
+        ORDER  BY timestamp ASC
+        """,
+        (camera, since),
+    ).fetchall()
+    conn.close()
+    return [{"timestamp": r[0], **json.loads(r[1])} for r in rows]
+
+
+# ─── WebSocket connection manager ─────────────────────────────────────────────
+
+class ConnectionManager:
+    """
+    Thread-safe WebSocket connection registry with async broadcast.
+    Handles dead-client cleanup automatically on send failure.
+    """
+
+    def __init__(self):
+        self._clients: set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+
+    async def connect(self, ws: WebSocket) -> None:
+        await ws.accept()
+        async with self._lock:
+            self._clients.add(ws)
+
+    async def disconnect(self, ws: WebSocket) -> None:
+        async with self._lock:
+            self._clients.discard(ws)
+
+    async def broadcast(self, data: dict) -> None:
+        payload = json.dumps(data)
+        async with self._lock:
+            dead: set[WebSocket] = set()
+            for client in self._clients:
+                try:
+                    await client.send_text(payload)
+                except Exception:
+                    dead.add(client)
+            self._clients -= dead
+
+    @property
+    def count(self) -> int:
+        return len(self._clients)
+
+
+# ─── In-memory state ──────────────────────────────────────────────────────────
+
+manager = ConnectionManager()
+
+# Latest telemetry payload per camera (for snapshot & new-client hydration)
+latest_state: dict[str, dict] = {}
+
+
+# ─── App lifecycle ─────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="Retail Store Intelligence API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -11,45 +164,86 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class ConnectionManager:
-    """Thread-safe state management for WebSocket concurrency."""
-    def __init__(self):
-        self.active_connections = set()
-        self.lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        async with self.lock:
-            self.active_connections.add(websocket)
-
-    async def disconnect(self, websocket: WebSocket):
-        async with self.lock:
-            self.active_connections.discard(websocket)
-
-    async def broadcast(self, data: dict):
-        async with self.lock:
-            for connection in list(self.active_connections):
-                try:
-                    await connection.send_json(data)
-                except Exception:
-                    self.active_connections.discard(connection)
-
-manager = ConnectionManager()
+# ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+async def websocket_endpoint(ws: WebSocket):
+    """
+    Persistent WebSocket for dashboard clients.
+    Immediately hydrates new connections with the latest known snapshot.
+    """
+    await manager.connect(ws)
+    # Send the current state immediately so the dashboard isn't blank on load
+    if latest_state:
+        try:
+            await ws.send_text(json.dumps({
+                "type":    "snapshot",
+                "cameras": latest_state,
+            }))
+        except Exception:
+            pass
+
     try:
         while True:
-            await websocket.receive_text() 
+            await ws.receive_text()   # Keep connection alive; dashboard is read-only
     except WebSocketDisconnect:
-        await manager.disconnect(websocket)
+        await manager.disconnect(ws)
+
 
 @app.post("/telemetry")
 async def receive_telemetry(data: dict):
-    await manager.broadcast(data)
-    return {"status": "broadcasted"}
+    """
+    Ingests a telemetry payload from an edge node.
+    Persists to SQLite and broadcasts to all connected dashboard clients.
+    """
+    camera    = data.get("camera", "unknown")
+    timestamp = data.get("timestamp", time.time())
+
+    # Update in-memory latest state
+    latest_state[camera] = data
+
+    # Persist to SQLite asynchronously (avoids blocking the event loop)
+    payload_str = json.dumps(data)
+    await asyncio.to_thread(db_insert, camera, timestamp, payload_str)
+
+    # Broadcast live update to all dashboard clients
+    await manager.broadcast({"type": "update", "camera": camera, **data})
+
+    return {"status": "ok", "connected_clients": manager.count}
+
+
+@app.get("/snapshot")
+async def get_snapshot():
+    """
+    Returns the most recent telemetry payload for every known camera.
+    Used by the dashboard on first load to instantly populate KPIs and cards.
+    """
+    return JSONResponse({"cameras": latest_state})
+
+
+@app.get("/history")
+async def get_history(camera: str, minutes: int = 60):
+    """
+    Returns historical time-series data for one camera.
+
+    Query params:
+        camera  — Camera name (must match config.yaml camera.name)
+        minutes — Lookback window in minutes (default: 60, max: 120)
+    """
+    minutes = min(minutes, 120)
+    rows    = await asyncio.to_thread(db_fetch_history, camera, minutes)
+    return JSONResponse({"camera": camera, "minutes": minutes, "count": len(rows), "rows": rows})
+
+
+@app.get("/cameras")
+async def get_cameras():
+    """Returns the list of cameras that have sent at least one telemetry payload."""
+    return JSONResponse({"cameras": list(latest_state.keys())})
+
+
+# ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
