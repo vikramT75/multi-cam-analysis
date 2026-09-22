@@ -4,8 +4,8 @@ detector.py
 Main execution loop for the Retail Store Intelligence edge node.
 
 Run one instance per camera:
-    python src/detector.py --config config.yaml         # Camera 1 (Entrance + Checkout)
-    python src/detector.py --config config_cam2.yaml    # Camera 2 (Aisle)
+    python src/detector.py --config config.yaml
+    python src/detector.py --config config_cam2.yaml
 """
 
 import cv2
@@ -16,7 +16,6 @@ import logging
 import sys
 import os
 
-# Ensure src/ is importable regardless of the working directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ultralytics import YOLO
@@ -32,7 +31,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 def main():
     parser = argparse.ArgumentParser(description="Retail Intelligence Edge Node")
     parser.add_argument(
@@ -41,7 +39,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # ── Load configuration ────────────────────────────────────────────────────
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
@@ -54,16 +51,12 @@ def main():
     logger.info("Initialising Retail Intelligence node: %s", cam_name)
     logger.info("Zones: %s", [z["name"] for z in zone_configs])
 
-    # ── Initialise components ─────────────────────────────────────────────────
     model     = YOLO(config["model"]["weights"])
     streamer  = VideoStreamer(config["camera"]["source"], cam_name).start()
     telemetry = TelemetrySender()
     analyzer  = ZoneAnalyzer(zone_configs)
     journey   = JourneyTracker([z["name"] for z in zone_configs])
 
-    # Window is created lazily by cv2.imshow() on the first frame --
-    # calling namedWindow() before any frame exists produces a blank
-    # black ghost window, so we avoid it here.
     window_title = f"Retail Intelligence - {cam_name}"
     target_frame_time = 1.0 / streamer.fps
     logger.info("Inference started. Press 'q' to quit, 'i' to toggle HUD.")
@@ -79,7 +72,6 @@ def main():
                 logger.info("Stream ended for %s.", cam_name)
                 break
 
-            # ── Inference + tracking ──────────────────────────────────────────
             results = model.track(
                 frame,
                 persist=True,
@@ -90,7 +82,6 @@ def main():
                 iou=iou_thresh,
             )
 
-            # ── Spatial analytics ─────────────────────────────────────────────
             annotated = results[0].plot()
             track_zone_map = analyzer.process_tracks(annotated, results)
             journey.update(track_zone_map)
@@ -98,14 +89,10 @@ def main():
 
             cv2.imshow(window_title, annotated)
 
-            # On the very first frame, make the window user-resizable.
-            # We do this here (not before the loop) to avoid the blank black
-            # ghost window that appears when namedWindow() is called with no content.
             if first_frame:
                 cv2.setWindowProperty(window_title, cv2.WND_PROP_AUTOSIZE, cv2.WINDOW_NORMAL)
                 first_frame = False
 
-            # ── Telemetry dispatch ────────────────────────────────────────────
             telemetry.send({
                 "camera":      cam_name,
                 "timestamp":   time.time(),
@@ -116,7 +103,6 @@ def main():
                 "alerts":      analyzer.get_alerts(),
             })
 
-            # ── Frame timing ──────────────────────────────────────────────────
             elapsed    = time.time() - t0
             sleep_time = target_frame_time - elapsed
             wait_ms    = max(1, int(sleep_time * 1000) if sleep_time > 0 else 1)
@@ -134,7 +120,6 @@ def main():
         streamer.stop()
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-
 
 if __name__ == "__main__":
     main()

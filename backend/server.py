@@ -29,18 +29,14 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# ─── SQLite setup ─────────────────────────────────────────────────────────────
-
 DB_PATH = Path("data/analytics.db")
-# Max rows retained per camera (~2 hours at ~1 telemetry/sec)
-MAX_ROWS_PER_CAMERA = 7_200
 
+MAX_ROWS_PER_CAMERA = 7_200
 
 def _db_connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")   # Better concurrent read performance
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
-
 
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -59,7 +55,6 @@ def init_db() -> None:
     conn.commit()
     conn.close()
 
-
 def db_insert(camera: str, timestamp: float, payload_json: str) -> None:
     """Persist one telemetry record and prune oldest rows for this camera."""
     conn = _db_connect()
@@ -67,7 +62,7 @@ def db_insert(camera: str, timestamp: float, payload_json: str) -> None:
         "INSERT INTO telemetry (camera, timestamp, payload) VALUES (?, ?, ?)",
         (camera, timestamp, payload_json),
     )
-    # Keep only the most recent MAX_ROWS_PER_CAMERA rows per camera
+
     conn.execute(
         """
         DELETE FROM telemetry
@@ -84,7 +79,6 @@ def db_insert(camera: str, timestamp: float, payload_json: str) -> None:
     conn.commit()
     conn.close()
 
-
 def db_fetch_history(camera: str, minutes: int) -> list:
     """Return time-series rows for a camera covering the last N minutes."""
     since = time.time() - minutes * 60
@@ -100,9 +94,6 @@ def db_fetch_history(camera: str, minutes: int) -> list:
     ).fetchall()
     conn.close()
     return [{"timestamp": r[0], **json.loads(r[1])} for r in rows]
-
-
-# ─── WebSocket connection manager ─────────────────────────────────────────────
 
 class ConnectionManager:
     """
@@ -138,22 +129,14 @@ class ConnectionManager:
     def count(self) -> int:
         return len(self._clients)
 
-
-# ─── In-memory state ──────────────────────────────────────────────────────────
-
 manager = ConnectionManager()
 
-# Latest telemetry payload per camera (for snapshot & new-client hydration)
 latest_state: dict[str, dict] = {}
-
-
-# ─── App lifecycle ─────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     yield
-
 
 app = FastAPI(title="Retail Store Intelligence API", version="2.0.0", lifespan=lifespan)
 
@@ -164,9 +147,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ─── Endpoints ────────────────────────────────────────────────────────────────
-
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     """
@@ -174,7 +154,7 @@ async def websocket_endpoint(ws: WebSocket):
     Immediately hydrates new connections with the latest known snapshot.
     """
     await manager.connect(ws)
-    # Send the current state immediately so the dashboard isn't blank on load
+
     if latest_state:
         try:
             await ws.send_text(json.dumps({
@@ -186,10 +166,9 @@ async def websocket_endpoint(ws: WebSocket):
 
     try:
         while True:
-            await ws.receive_text()   # Keep connection alive; dashboard is read-only
+            await ws.receive_text()
     except WebSocketDisconnect:
         await manager.disconnect(ws)
-
 
 @app.post("/telemetry")
 async def receive_telemetry(data: dict):
@@ -200,18 +179,14 @@ async def receive_telemetry(data: dict):
     camera    = data.get("camera", "unknown")
     timestamp = data.get("timestamp", time.time())
 
-    # Update in-memory latest state
     latest_state[camera] = data
 
-    # Persist to SQLite asynchronously (avoids blocking the event loop)
     payload_str = json.dumps(data)
     await asyncio.to_thread(db_insert, camera, timestamp, payload_str)
 
-    # Broadcast live update to all dashboard clients
     await manager.broadcast({"type": "update", "camera": camera, **data})
 
     return {"status": "ok", "connected_clients": manager.count}
-
 
 @app.get("/snapshot")
 async def get_snapshot():
@@ -220,7 +195,6 @@ async def get_snapshot():
     Used by the dashboard on first load to instantly populate KPIs and cards.
     """
     return JSONResponse({"cameras": latest_state})
-
 
 @app.get("/history")
 async def get_history(camera: str, minutes: int = 60):
@@ -235,14 +209,10 @@ async def get_history(camera: str, minutes: int = 60):
     rows    = await asyncio.to_thread(db_fetch_history, camera, minutes)
     return JSONResponse({"camera": camera, "minutes": minutes, "count": len(rows), "rows": rows})
 
-
 @app.get("/cameras")
 async def get_cameras():
     """Returns the list of cameras that have sent at least one telemetry payload."""
     return JSONResponse({"cameras": list(latest_state.keys())})
-
-
-# ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn

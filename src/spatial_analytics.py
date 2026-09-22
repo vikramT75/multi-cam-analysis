@@ -15,7 +15,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 class ZoneAnalyzer:
     """
     Evaluates object tracks against multiple named polygonal zones simultaneously.
@@ -33,7 +32,7 @@ class ZoneAnalyzer:
 
         for zc in zone_configs:
             name = zc["name"]
-            # Config stores RGB; OpenCV uses BGR
+
             rgb = zc.get("color", [0, 255, 255])
             bgr = (rgb[2], rgb[1], rgb[0])
 
@@ -41,15 +40,13 @@ class ZoneAnalyzer:
                 "polygon":     np.array(zc["polygon"], np.int32).reshape((-1, 1, 2)),
                 "color":       bgr,
                 "alert_dwell": zc.get("alert_dwell_seconds", None),
-                # Per-frame state
+
                 "occupants":      set(),
                 "all_time_entered": set(),
-                "entry_times":    {},   # track_id -> entry timestamp (float)
-                "dwell_times":    {},   # track_id -> current dwell seconds (float)
-                "heatmap":        None, # np.float32 array, lazy-initialised
+                "entry_times":    {},
+                "dwell_times":    {},
+                "heatmap":        None,
             }
-
-    # ── Core processing ───────────────────────────────────────────────────────
 
     def process_tracks(self, frame: np.ndarray, tracks) -> dict:
         """
@@ -69,15 +66,13 @@ class ZoneAnalyzer:
         now = time.time()
         track_zone_map: dict = {}
 
-        # ── Initialise / decay heatmaps ──────────────────────────────────────
         h, w = frame.shape[:2]
         for zdata in self._zones.values():
             if zdata["heatmap"] is None:
                 zdata["heatmap"] = np.zeros((h, w), dtype=np.float32)
             else:
-                zdata["heatmap"] *= 0.98   # Exponential decay — prevents saturation
+                zdata["heatmap"] *= 0.98
 
-        # ── Reset per-frame occupant sets ────────────────────────────────────
         current_occupants: dict[str, set] = {name: set() for name in self._zones}
 
         if (
@@ -93,13 +88,13 @@ class ZoneAnalyzer:
                 x1, y1, x2, y2 = box
                 foot = (int((x1 + x2) / 2), int(y2))
 
-                occupied_zone = None   # first zone this track is inside
+                occupied_zone = None
 
                 for zone_name, zdata in self._zones.items():
                     inside = cv2.pointPolygonTest(zdata["polygon"], foot, False) >= 0
 
                     if inside:
-                        # Accumulate heat only inside zone boundaries
+
                         tmp = np.zeros_like(zdata["heatmap"])
                         cv2.circle(tmp, foot, 28, 1.0, -1)
                         zdata["heatmap"] += tmp
@@ -108,27 +103,23 @@ class ZoneAnalyzer:
                         if occupied_zone is None:
                             occupied_zone = zone_name
 
-                        # Dwell time bookkeeping
                         if track_id not in zdata["entry_times"]:
                             zdata["entry_times"][track_id] = now
                         zdata["dwell_times"][track_id] = now - zdata["entry_times"][track_id]
 
-                # ── Visual foot-point indicator ───────────────────────────────
                 if occupied_zone:
                     dot_color = self._zones[occupied_zone]["color"]
                 else:
-                    dot_color = (0, 255, 80)   # bright green — outside all zones
+                    dot_color = (0, 255, 80)
 
                 cv2.circle(frame, foot, 8, dot_color, -1)
-                cv2.circle(frame, foot, 8, (255, 255, 255), 1)   # white outline
+                cv2.circle(frame, foot, 8, (255, 255, 255), 1)
 
                 track_zone_map[track_id] = occupied_zone
 
-        # ── Update persistent zone state ──────────────────────────────────────
         for zone_name, zdata in self._zones.items():
             occ = current_occupants[zone_name]
 
-            # Remove state for tracks that have left this zone
             for tid in list(zdata["entry_times"]):
                 if tid not in occ:
                     zdata["entry_times"].pop(tid, None)
@@ -139,8 +130,6 @@ class ZoneAnalyzer:
 
         return track_zone_map
 
-    # ── Rendering ─────────────────────────────────────────────────────────────
-
     def draw_zones(self, frame: np.ndarray, show_hud: bool = True) -> np.ndarray:
         """
         Renders all zones onto the frame:
@@ -148,7 +137,7 @@ class ZoneAnalyzer:
           2. Filled polygon overlay with zone label
           3. Global HUD summarising all zones (togglable)
         """
-        # 1. Heatmaps
+
         for zdata in self._zones.values():
             hm = zdata["heatmap"]
             if hm is None:
@@ -162,20 +151,16 @@ class ZoneAnalyzer:
                 overlay[mask] = colored[mask]
                 frame = cv2.addWeighted(overlay, 0.45, frame, 0.55, 0)
 
-        # 2. Zone polygons + labels
         for zone_name, zdata in self._zones.items():
             poly  = zdata["polygon"]
             color = zdata["color"]
 
-            # Translucent fill
             overlay = frame.copy()
             cv2.fillPoly(overlay, [poly], color)
             frame = cv2.addWeighted(overlay, 0.15, frame, 0.85, 0)
 
-            # Border
             cv2.polylines(frame, [poly], isClosed=True, color=color, thickness=2)
 
-            # Zone name label at polygon top-left
             pts = poly.reshape(-1, 2)
             lx  = int(pts[:, 0].min())
             ly  = int(pts[:, 1].min())
@@ -188,7 +173,6 @@ class ZoneAnalyzer:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2
             )
 
-        # 3. HUD overlay
         if show_hud:
             row_h   = 26
             hud_h   = 16 + len(self._zones) * row_h
@@ -209,8 +193,6 @@ class ZoneAnalyzer:
                 )
 
         return frame
-
-    # ── Data export ───────────────────────────────────────────────────────────
 
     def get_zone_states(self) -> dict:
         """

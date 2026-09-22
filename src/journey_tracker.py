@@ -19,12 +19,8 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-# Zone order for Sankey layout (left = source, right = destinations).
-# Cam1: Entrance branches to Kiosk, Seating, Shop_Entry
-# Cam2: product zones — intra-aisle transitions (Cups->Bowls etc.) are meaningful
 ZONE_ORDER = ["Entrance", "Kiosk", "Seating", "Shop_Entry",
               "Pots", "Cups", "Plates", "Bowls"]
-
 
 class JourneyTracker:
     """
@@ -37,12 +33,10 @@ class JourneyTracker:
     def __init__(self, zone_names: list):
         self.zone_names = zone_names
         self._last_zone: dict[int, str | None] = {}
-        # transitions["Entrance"]["Checkout"] = 47
-        self._transitions: dict = defaultdict(lambda: defaultdict(int))
-        # Unique track IDs ever seen in each zone
-        self._zone_unique: dict[str, set] = defaultdict(set)
 
-    # ── Public API ────────────────────────────────────────────────────────────
+        self._transitions: dict = defaultdict(lambda: defaultdict(int))
+
+        self._zone_unique: dict[str, set] = defaultdict(set)
 
     def update(self, track_zone_map: dict):
         """
@@ -57,7 +51,6 @@ class JourneyTracker:
             if current_zone:
                 self._zone_unique[current_zone].add(track_id)
 
-            # Only record a transition when the zone genuinely changes
             if prev_zone != current_zone:
                 if prev_zone is not None and current_zone is not None:
                     self._transitions[prev_zone][current_zone] += 1
@@ -92,9 +85,9 @@ class JourneyTracker:
         Returns:
             {"nodes": [{"name": "Entrance"}, ...], "links": [{"source": 0, "target": 1, "value": 47}, ...]}
         """
-        # Only include zones with actual data, ordered by ZONE_ORDER
+
         ordered = [z for z in ZONE_ORDER if z in self._zone_unique]
-        # Append any zones not in ZONE_ORDER (custom zone names)
+
         for z in self.zone_names:
             if z not in ordered and z in self._zone_unique:
                 ordered.append(z)

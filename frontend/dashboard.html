@@ -43,9 +43,6 @@
 
 <body class="text-gray-100 min-h-screen font-sans">
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     HEADER
-═══════════════════════════════════════════════════════════════════════════ -->
 <div class="border-b border-gray-800 px-8 py-4 flex items-center justify-between">
     <div>
         <h1 class="text-2xl font-bold text-white tracking-tight">
@@ -65,9 +62,6 @@
 
 <div class="px-8 py-6 max-w-screen-2xl mx-auto space-y-6">
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     KPI STRIP
-═══════════════════════════════════════════════════════════════════════════ -->
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
 
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -96,22 +90,17 @@
 
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     MAIN BODY: camera cards (left) + Sankey (right)
-═══════════════════════════════════════════════════════════════════════════ -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-    <!-- ── Camera Zone Cards ─────────────────────────────────────────────── -->
     <div class="lg:col-span-2 space-y-4">
         <h2 class="text-xs text-gray-500 uppercase tracking-widest font-semibold">
             Active Edge Nodes
         </h2>
         <div id="camera-grid" class="space-y-4">
-            <!-- Injected dynamically per camera -->
+            
         </div>
     </div>
 
-    <!-- ── Sankey: Customer Journey Flow ─────────────────────────────────── -->
     <div class="lg:col-span-1">
         <h2 class="text-xs text-gray-500 uppercase tracking-widest font-semibold mb-3">
             Conversion Flow (Sankey)
@@ -120,7 +109,6 @@
             <svg id="sankey-svg" class="w-full" style="height:320px;"></svg>
             <div id="sankey-tooltip"></div>
 
-            <!-- Legend -->
             <div class="mt-3 border-t border-gray-800 pt-3 space-y-2">
                 <p class="text-xs text-gray-600 uppercase tracking-widest">Mall (Cam 1)</p>
                 <div class="flex flex-wrap gap-3">
@@ -158,16 +146,13 @@
 
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     HISTORY CHART
-═══════════════════════════════════════════════════════════════════════════ -->
 <div>
     <div class="flex items-center justify-between mb-3">
         <h2 class="text-xs text-gray-500 uppercase tracking-widest font-semibold">
             Zone Traffic — Rolling 60 minutes
         </h2>
         <div id="chart-legend" class="flex gap-4 text-xs text-gray-400">
-            <!-- Dynamic dataset legend injected here -->
+            
         </div>
     </div>
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -177,7 +162,6 @@
     </div>
 </div>
 
-<!-- Alert log -->
 <div id="alert-panel" class="hidden">
     <h2 class="text-xs text-gray-500 uppercase tracking-widest font-semibold mb-3">
         🚨 Active Alerts
@@ -185,48 +169,36 @@
     <div id="alert-list" class="space-y-2"></div>
 </div>
 
-</div><!-- /container -->
+</div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     TOOLTIP (Sankey)
-═══════════════════════════════════════════════════════════════════════════ -->
 <div id="sankey-tooltip"></div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     JAVASCRIPT
-═══════════════════════════════════════════════════════════════════════════ -->
 <script>
 "use strict";
-
-// ── Constants ─────────────────────────────────────────────────────────────────
 
 const WS_URL     = "ws://localhost:8000/ws";
 const ZONE_ORDER = ["Entrance", "Aisle", "Kiosk", "Seating", "Shop_Entry",
                     "Cups", "Pots", "Plates", "Bowls"];
 const ZONE_COLORS = {
-    // Cam 1 — Mall atrium
-    "Entrance":   "#00ff96",   // green
-    "Aisle":      "#ffc800",   // amber  (legacy)
-    "Kiosk":      "#ffd700",   // gold
-    "Seating":    "#00c8ff",   // cyan
-    "Shop_Entry": "#ff6400",   // orange
-    // Cam 2 — Kitchenware aisle (matches user's annotation colours)
-    "Pots":       "#ffa500",   // orange-yellow
-    "Cups":       "#00c800",   // green
-    "Plates":     "#1e90ff",   // blue
-    "Bowls":      "#ff3c3c",   // red
+
+    "Entrance":   "#00ff96",
+    "Aisle":      "#ffc800",
+    "Kiosk":      "#ffd700",
+    "Seating":    "#00c8ff",
+    "Shop_Entry": "#ff6400",
+
+    "Pots":       "#ffa500",
+    "Cups":       "#00c800",
+    "Plates":     "#1e90ff",
+    "Bowls":      "#ff3c3c",
 };
-// Fallback palette for custom zone names
+
 const EXTRA_COLORS = ["#a78bfa", "#f87171", "#34d399", "#fb923c"];
 const MAX_HISTORY_POINTS = 60;
 
-// ── State ─────────────────────────────────────────────────────────────────────
-
-const cameraStates  = {};   // camera -> latest telemetry payload
-const zoneHistory   = {};   // zone   -> [{t, occupancy}] ring buffer
-let activeAlerts    = {};   // key(zone+tid) -> alert object
-
-// ── Utility ───────────────────────────────────────────────────────────────────
+const cameraStates  = {};
+const zoneHistory   = {};
+let activeAlerts    = {};
 
 function zoneColor(name) {
     return ZONE_COLORS[name] || EXTRA_COLORS[Object.keys(ZONE_COLORS).length % EXTRA_COLORS.length];
@@ -243,8 +215,6 @@ function flashElement(el) {
     el.classList.add("kpi-flash");
     setTimeout(() => el.classList.remove("kpi-flash"), 600);
 }
-
-// ── History Chart (Chart.js) ──────────────────────────────────────────────────
 
 const histCtx = document.getElementById("historyChart").getContext("2d");
 const histChart = new Chart(histCtx, {
@@ -296,7 +266,6 @@ function ensureZoneDataset(zoneName) {
         tension:         0.4,
     });
 
-    // Update legend panel
     const legend = document.getElementById("chart-legend");
     const item   = document.createElement("div");
     item.className = "flex items-center gap-1.5";
@@ -312,7 +281,6 @@ function pushHistoryPoint(zoneName, occupancy) {
 
     const now = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-    // Shared x-axis labels — push only if this is the first zone update for this tick
     const ds0 = histChart.data.datasets[0];
     if (zoneName === (histChart.data.datasets[0]?.label) || histChart.data.datasets.length === 0) {
         histChart.data.labels.push(now);
@@ -324,25 +292,21 @@ function pushHistoryPoint(zoneName, occupancy) {
     if (ds.data.length > MAX_HISTORY_POINTS) ds.data.shift();
 }
 
-// We need a unified tick across all zones, so let's use a time-indexed approach
-const historyTicks = [];      // [{time, zoneOccupancies}]
+const historyTicks = [];
 
 function recordHistoryTick(zoneStates) {
     const now = new Date().toLocaleTimeString("en-GB", {
         hour: "2-digit", minute: "2-digit", second: "2-digit"
     });
 
-    // Ensure all active zone datasets exist
     for (const zoneName of Object.keys(zoneStates)) {
         ensureZoneDataset(zoneName);
     }
 
-    // Push time label
     histChart.data.labels.push(now);
     if (histChart.data.labels.length > MAX_HISTORY_POINTS)
         histChart.data.labels.shift();
 
-    // Push occupancy (or 0 for zones not in this tick)
     for (const ds of histChart.data.datasets) {
         const occ = zoneStates[ds.label]?.occupancy ?? 0;
         ds.data.push(occ);
@@ -352,11 +316,9 @@ function recordHistoryTick(zoneStates) {
     histChart.update("none");
 }
 
-// ── KPI Update ────────────────────────────────────────────────────────────────
-
 function updateKPIs() {
-    // Aggregate all zone states across all cameras
-    const aggregated = {};   // zone -> {occupancy, total_entered, avg_dwell, max_dwell}
+
+    const aggregated = {};
 
     for (const camData of Object.values(cameraStates)) {
         if (!camData.zones) continue;
@@ -372,33 +334,26 @@ function updateKPIs() {
         }
     }
 
-    // Average the avg_dwell across cameras that report it
     for (const z of Object.values(aggregated)) {
         if (z._count > 0) z.avg_dwell /= z._count;
     }
 
-    // Footfall = unique entries through Entrance zone
     const footfall = aggregated["Entrance"]?.total_entered ?? 0;
     document.getElementById("kpi-footfall").textContent = footfall.toLocaleString();
 
-    // Shop Conversion = Shop_Entry visitors / Entrance footfall
     const shopVisitors = aggregated["Shop_Entry"]?.total_entered ?? 0;
     const convEl       = document.getElementById("kpi-conversion");
     convEl.textContent = footfall > 0 ? `${((shopVisitors / footfall) * 100).toFixed(1)}%` : "—";
 
-    // Kiosk Engagement = Kiosk visitors / Entrance footfall
     const kioskVisitors = aggregated["Kiosk"]?.total_entered ?? 0;
     const browseEl      = document.getElementById("kpi-browse");
     browseEl.textContent = footfall > 0 ? `${((kioskVisitors / footfall) * 100).toFixed(1)}%` : "—";
 
-    // Avg Seating Dwell
     const queueEl = document.getElementById("kpi-queue");
     queueEl.textContent = fmtSeconds(aggregated["Seating"]?.avg_dwell);
 
     return aggregated;
 }
-
-// ── Camera Card Rendering ─────────────────────────────────────────────────────
 
 function getOrCreateCameraCard(camName) {
     const cardId = `card-${camName}`;
@@ -461,8 +416,6 @@ function renderZoneCard(camName, zoneName, metrics) {
     `;
 }
 
-// ── Alerts ────────────────────────────────────────────────────────────────────
-
 function updateAlerts(camName, alerts) {
     const camAlertBadge = document.getElementById(`cam-alert-${camName}`);
     const panel         = document.getElementById("alert-panel");
@@ -478,7 +431,7 @@ function updateAlerts(camName, alerts) {
 
     for (const alert of alerts) {
         const key = `${camName}-${alert.zone}-${alert.track_id}`;
-        if (activeAlerts[key]) continue;  // Don't re-add same alert
+        if (activeAlerts[key]) continue;
 
         activeAlerts[key] = alert;
 
@@ -493,7 +446,6 @@ function updateAlerts(camName, alerts) {
         `;
         list.prepend(item);
 
-        // Auto-clear after 30 seconds
         setTimeout(() => {
             item.remove();
             delete activeAlerts[key];
@@ -501,8 +453,6 @@ function updateAlerts(camName, alerts) {
         }, 30000);
     }
 }
-
-// ── D3 Sankey ─────────────────────────────────────────────────────────────────
 
 function buildAggregatedSankey() {
     /**
@@ -514,8 +464,8 @@ function buildAggregatedSankey() {
      *    This is the best approximation without cross-camera Re-ID.
      *  - Explicit within-camera transitions are also added (de-duplicated).
      */
-    const funnel     = {};    // zone -> total unique visitors
-    const explicit   = {};    // "A->B" -> count (from real transitions)
+    const funnel     = {};
+    const explicit   = {};
 
     for (const camData of Object.values(cameraStates)) {
         if (camData.funnel) {
@@ -533,7 +483,6 @@ function buildAggregatedSankey() {
         }
     }
 
-    // Build ordered node list (respecting ZONE_ORDER + any custom zones)
     const allZones   = Object.keys(funnel);
     const ordered    = ZONE_ORDER.filter(z => allZones.includes(z));
     for (const z of allZones) { if (!ordered.includes(z)) ordered.push(z); }
@@ -545,7 +494,6 @@ function buildAggregatedSankey() {
     const nodes      = ordered.map(name => ({ name, value: funnel[name] || 0 }));
     const linksMap   = {};
 
-    // Implied sequential flow links
     for (let i = 0; i < ordered.length - 1; i++) {
         const src = ordered[i], dst = ordered[i + 1];
         const val = Math.min(funnel[src] || 0, funnel[dst] || 0);
@@ -555,7 +503,6 @@ function buildAggregatedSankey() {
         }
     }
 
-    // Override / supplement with explicit transitions
     for (const [key, cnt] of Object.entries(explicit)) {
         const [frm, to] = key.split("->");
         if (!(frm in nodeIndex) || !(to in nodeIndex)) continue;
@@ -589,7 +536,6 @@ function renderSankey() {
         return;
     }
 
-    // Deep-clone to avoid d3-sankey mutating our state
     const sankeyData = {
         nodes: data.nodes.map(d => ({ ...d })),
         links: data.links.map(d => ({ ...d })),
@@ -610,7 +556,6 @@ function renderSankey() {
 
     const tooltip = document.getElementById("sankey-tooltip");
 
-    // ── Links ──
     svg.append("g")
        .selectAll("path")
        .data(graph.links)
@@ -634,7 +579,6 @@ function renderSankey() {
            tooltip.style.display = "none";
        });
 
-    // ── Nodes ──
     const nodeG = svg.append("g").selectAll("g").data(graph.nodes).join("g");
 
     nodeG.append("rect")
@@ -645,7 +589,6 @@ function renderSankey() {
          .attr("fill",   d => zoneColor(d.name))
          .attr("rx", 3);
 
-    // ── Labels ──
     nodeG.append("text")
          .attr("x", d => d.x0 < W / 2 ? d.x1 + 7 : d.x0 - 7)
          .attr("y", d => (d.y1 + d.y0) / 2)
@@ -657,36 +600,27 @@ function renderSankey() {
          .text(d => `${d.name} (${d.value || 0})`);
 }
 
-// ── Main Update Handler ───────────────────────────────────────────────────────
-
 function handleTelemetry(camName, data) {
     cameraStates[camName] = data;
 
-    // Camera card + zone sub-cards
     getOrCreateCameraCard(camName);
     if (data.zones) {
         for (const [zone, metrics] of Object.entries(data.zones)) {
             renderZoneCard(camName, zone, metrics);
         }
-        // Record to history chart (one tick per camera update)
+
         recordHistoryTick(data.zones);
     }
 
-    // Global KPIs
     updateKPIs();
 
-    // Sankey
     renderSankey();
 
-    // Alerts
     updateAlerts(camName, data.alerts);
 
-    // Timestamp
     document.getElementById("last-update-time").textContent =
         new Date().toLocaleTimeString();
 }
-
-// ── WebSocket ─────────────────────────────────────────────────────────────────
 
 let ws;
 
@@ -704,7 +638,7 @@ function connectWebSocket() {
         try { msg = JSON.parse(event.data); } catch { return; }
 
         if (msg.type === "snapshot") {
-            // Hydrate all cameras at once (sent on first connect)
+
             for (const [cam, camData] of Object.entries(msg.cameras || {})) {
                 handleTelemetry(cam, camData);
             }
@@ -723,11 +657,8 @@ function connectWebSocket() {
     ws.onerror = () => ws.close();
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-
 connectWebSocket();
 
-// Re-render Sankey on window resize
 let resizeTimer;
 window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);

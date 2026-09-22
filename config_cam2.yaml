@@ -1,40 +1,15 @@
-# ==========================================
-# Retail Intelligence Engine -- Camera 2
-# Kitchenware/Utensil Aisle — overhead view
-# Video: data/cam2_aisle_crowd.mp4 (720x404 @ 15fps)
-#
-# Zone layout — each zone maps to a product display area.
-# We detect PEOPLE (class 0) and check which product zone they stand in.
-# Dwell time per zone = customer attention per product category.
-#
-#   +──────────────── 720 ────────────────+
-#   |  [Pots]   │  [Cups]  │  [Plates]   |
-#   |  left     │  center  │  right-mid  |
-#   |  shelves  │  table   │  shelves    |  [Bowls]
-#   |           │          │             |  far-right
-#   +───────────────────────────────────-+
-#
-# Analytics story (per product category):
-#   total_entered  -> footfall past each display
-#   avg_dwell      -> average attention time (higher = more interest)
-#   occupancy      -> how many people browsing right now
-#
-# Dashboard KPIs will show which category wins most customer attention.
-# ==========================================
-
 camera:
   name: "Aisle_Cam"
   source: "data/cam2_aisle_crowd.mp4"
 
 analytics:
-  classes_to_track: [0] # Person only
+  classes_to_track: [0]
 
   zones:
     - name: "Pots"
-      color: [255, 165, 0] # Orange-yellow (RGB) -- matches annotation
-      alert_dwell_seconds: 360 # 6+ min browsing = may need sales assistance
-      # Left-side shelving unit where pots/larger items are displayed.
-      # Calibrated from user annotation on 720x404 frame.
+      color: [255, 165, 0]
+      alert_dwell_seconds: 360
+
       polygon:
         - [0, 45]
         - [165, 45]
@@ -42,10 +17,9 @@ analytics:
         - [0, 355]
 
     - name: "Cups"
-      color: [0, 200, 0] # Green (RGB) -- matches annotation
+      color: [0, 200, 0]
       alert_dwell_seconds: 360
-      # Central floor display table showing cups, mugs, and small bowls.
-      # This is the most accessible display -- usually highest footfall.
+
       polygon:
         - [230, 240]
         - [400, 240]
@@ -53,9 +27,9 @@ analytics:
         - [130, 400]
 
     - name: "Plates"
-      color: [30, 144, 255] # Blue (RGB) -- matches annotation
+      color: [30, 144, 255]
       alert_dwell_seconds: 360
-      # Right-centre shelving with stacked plates and flat tableware.
+
       polygon:
         - [405, 45]
         - [555, 45]
@@ -63,9 +37,9 @@ analytics:
         - [405, 325]
 
     - name: "Bowls"
-      color: [255, 60, 60] # Red (RGB) -- matches annotation
+      color: [255, 60, 60]
       alert_dwell_seconds: 360
-      # Far-right shelving with bowls and deep vessels.
+
       polygon:
         - [532, 138]
         - [720, 138]

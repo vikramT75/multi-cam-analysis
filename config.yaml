@@ -1,37 +1,15 @@
-# ==========================================
-# Retail Intelligence Engine -- Camera 1
-# Mall atrium wide-angle view
-# Video: data/cam1_mall_entrance.mp4 (640x480 @ 6fps)
-#
-# Zone layout (four semantically meaningful zones):
-#
-#   +----------- 640 -----------+
-#   |   [     Entrance      ]   |  y: 90-280  (far corridor, real entry point)
-#   |                    [SHOP] |  x: 548-640, y: 110-300
-#   |          [Seating]        |  x: 255-435, y: 255-400 (tree/fountain area)
-#   | [Stall]                   |  x: 60-290,  y: 375-480 (glass stall)
-#   +---------------------------+
-#
-# Analytics story:
-#   Footfall  -> who enters from the far corridor
-#   Stall %   -> what % of entrants stop at the Stall
-#   Seating % -> what % rest at the central seating
-#   Shop %    -> what % enter the right-side store
-# ==========================================
-
 camera:
   name: "Entrance_Cam"
   source: "data/cam1_mall_entrance.mp4"
 
 analytics:
-  classes_to_track: [0] # Person only -- indoor mall scene
+  classes_to_track: [0]
 
   zones:
     - name: "Entrance"
-      color: [0, 255, 150] # Green (RGB)
-      alert_dwell_seconds: 180 # Loitering at entrance > 3 min is unusual
-      # Far corridor -- the real entry point of the mall.
-      # Covers the walking lane where people first appear coming from the far end.
+      color: [0, 255, 150]
+      alert_dwell_seconds: 180
+
       polygon:
         - [60, 10]
         - [540, 10]
@@ -39,10 +17,9 @@ analytics:
         - [60, 190]
 
     - name: "Stall"
-      color: [255, 215, 0] # Gold/yellow (RGB)
-      alert_dwell_seconds: 480 # Someone at the Stall 8+ min may be blocking
-      # Glass display Stall in the bottom-center of the frame.
-      # Dwell time here = Stall engagement. High dwell = interested customer.
+      color: [255, 215, 0]
+      alert_dwell_seconds: 480
+
       polygon:
         - [120, 375]
         - [290, 375]
@@ -50,10 +27,9 @@ analytics:
         - [120, 480]
 
     - name: "Seating"
-      color: [0, 200, 255] # Cyan (RGB)
-      alert_dwell_seconds: 900 # Alert only if someone is there > 15 min
-      # Seating/rest area around the central tree and fountain base.
-      # Dwell time here = rest/wait behaviour. Useful for crowd flow analysis.
+      color: [0, 200, 255]
+      alert_dwell_seconds: 900
+
       polygon:
         - [255, 225]
         - [400, 225]
@@ -61,10 +37,9 @@ analytics:
         - [255, 340]
 
     - name: "Shop_Entry"
-      color: [255, 100, 0] # Orange (RGB)
-      alert_dwell_seconds: 300 # Lingering at doorway > 5 min = high engagement
-      # Tight polygon on the actual shop doorway (right-side store entrance).
-      # Only fires when someone physically steps through the door.
+      color: [255, 100, 0]
+      alert_dwell_seconds: 300
+
       polygon:
         - [548, 110]
         - [640, 110]

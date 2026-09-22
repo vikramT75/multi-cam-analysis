@@ -43,11 +43,9 @@ try:
 except ImportError:
     HAS_TQDM = False
 
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-
-
-# --- Helper: download with progress bar ---------------------------------------
+ROOT_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 def download(url: str, dest: Path, label: str = "") -> bool:
     """Download a URL to dest. Returns True on success."""
@@ -79,7 +77,6 @@ def download(url: str, dest: Path, label: str = "") -> bool:
             dest.unlink()
         return False
 
-
 def yt_dlp_download(url: str, dest: Path, label: str = "") -> bool:
     """Download a video using yt-dlp. Returns True on success."""
     print(f"\n{'-'*60}")
@@ -106,19 +103,8 @@ def yt_dlp_download(url: str, dest: Path, label: str = "") -> bool:
         print(f"  [FAIL] Failed: {e}")
         return False
 
-
 def has_yt_dlp() -> bool:
     return shutil.which("yt-dlp") is not None
-
-
-# --- Source 1: CUHK Mall Dataset ----------------------------------------------
-#
-# Real indoor shopping mall surveillance footage. Overhead wide-angle,
-# continuous crowd flow -- perfect for Entrance + Checkout simulation.
-# Research licence (non-commercial). Cite: Loy, Gong, Xiang (ICCV 2013).
-#
-# Provides 2000 JPEG frames (640x480). We assemble them into an MP4.
-# ------------------------------------------------------------------------------
 
 MALL_DATASET_URL = "https://personal.ie.cuhk.edu.hk/~ccloy/files/datasets/mall_dataset.zip"
 MALL_ZIP         = DATA_DIR / "mall_dataset.zip"
@@ -130,13 +116,11 @@ def build_cam1():
         print(f"\n  [OK] {CAM1_OUT.name} already exists -- skipping.")
         return True
 
-    # 1. Download zip
     if not MALL_ZIP.exists():
         ok = download(MALL_DATASET_URL, MALL_ZIP, "CUHK Mall Dataset (frames + annotations)")
         if not ok:
             return False
 
-    # 2. Unzip
     if not MALL_FRAMES_DIR.exists():
         print("\n  Extracting zip...")
         try:
@@ -147,7 +131,6 @@ def build_cam1():
             print(f"  [FAIL] Extract failed: {e}")
             return False
 
-    # 3. Assemble frames -> MP4 using OpenCV
     frames = sorted(MALL_FRAMES_DIR.glob("*.jpg"))
     if not frames:
         print(f"  [FAIL] No frames found in {MALL_FRAMES_DIR}")
@@ -161,8 +144,7 @@ def build_cam1():
         writer = cv2.VideoWriter(
             str(CAM1_OUT),
             cv2.VideoWriter_fourcc(*"mp4v"),
-            # The Mall Dataset was captured at <2 Hz (research slideshow, not live video).
-            # 6 fps is the sweet spot: natural-looking movement + smooth tracking continuity.
+            
             6,
             (w, h),
         )
@@ -180,27 +162,13 @@ def build_cam1():
         print("  -> Install opencv-python: pip install opencv-python")
         return False
 
-
-# --- Source 2: Pexels crowd walking footage -----------------------------------
-#
-# Free stock footage -- wide indoor/mall shots with visible crowd movement.
-# yt-dlp handles Pexels download; falls back to Oxford Town Centre if unavailable.
-#
-# Pexels licence: free for research and commercial use, no attribution required.
-# https://www.pexels.com/license/
-# ------------------------------------------------------------------------------
-
-# These are well-known Pexels video IDs with clear crowd-walking content
 PEXELS_CANDIDATES = [
-    # People walking in a shopping mall (overhead / side angle)
+    
     ("https://www.pexels.com/video/people-in-a-supermarket-3009551/",     "supermarket crowd (Pexels #3009551)"),
     ("https://www.pexels.com/video/time-lapse-of-people-at-mall-4067918/","mall time-lapse (Pexels #4067918)"),
     ("https://www.pexels.com/video/crowded-pedestrian-overpass-4823546/", "pedestrian crowd (Pexels #4823546)"),
 ]
 
-# Intel IoT Dev Kit sample videos -- MIT licence, confirmed live as of 2026-09
-# Primary: store-aisle-detection.mp4 (9 MB, indoor aisle overhead view -- ideal for Aisle zone)
-# Fallback: people-detection.mp4 (5 MB, pedestrian walkway crowd shot)
 OXFORD_FALLBACK_URLS = [
     "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/store-aisle-detection.mp4",
     "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/people-detection.mp4",
@@ -213,7 +181,6 @@ def build_cam2():
         print(f"\n  [OK] {CAM2_OUT.name} already exists -- skipping.")
         return True
 
-    # Try yt-dlp on Pexels
     if has_yt_dlp():
         for url, label in PEXELS_CANDIDATES:
             ok = yt_dlp_download(url, CAM2_OUT, label)
@@ -223,7 +190,6 @@ def build_cam2():
         print("\n  yt-dlp not found -- using Oxford Town Centre fallback.")
         print("  (Install yt-dlp for higher quality Pexels footage: pip install yt-dlp)")
 
-    # Fallback: direct download
     for url in OXFORD_FALLBACK_URLS:
         ok = download(url, CAM2_OUT, "Oxford Town Centre pedestrian video")
         if ok and CAM2_OUT.exists():
@@ -231,16 +197,13 @@ def build_cam2():
 
     return False
 
-
-# --- Update config files -------------------------------------------------------
-
 def update_configs():
     """Patch config.yaml and config_cam2.yaml to point at the downloaded footage."""
     import yaml
 
     updates = [
-        ("config.yaml",      CAM1_OUT),
-        ("config_cam2.yaml", CAM2_OUT),
+        (ROOT_DIR / "config.yaml",      CAM1_OUT),
+        (ROOT_DIR / "config_cam2.yaml", CAM2_OUT),
     ]
 
     for cfg_path, video_path in updates:
@@ -257,9 +220,6 @@ def update_configs():
             print(f"  [OK] Updated {cfg_path} -> source: {video_path}")
         except Exception as e:
             print(f"  [WARN] Could not update {cfg_path}: {e}")
-
-
-# --- Main ----------------------------------------------------------------------
 
 def main():
     print("\n" + "=" * 60)
@@ -294,7 +254,6 @@ def main():
         print("  You can re-run this script -- completed files are skipped.")
 
     print()
-
 
 if __name__ == "__main__":
     main()
