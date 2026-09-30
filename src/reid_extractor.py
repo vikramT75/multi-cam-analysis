@@ -1,6 +1,7 @@
 import cv2
 import torch
 import numpy as np
+import base64
 import torchvision.transforms as T
 from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 
@@ -68,4 +69,9 @@ class ReIDExtractor:
         # L2 normalize embeddings so we can use Cosine Similarity cleanly
         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
         
-        return embeddings.cpu().numpy().tolist()
+        embeddings_np = embeddings.cpu().numpy()
+        b64_list = [
+            base64.b64encode(emb.tobytes()).decode('ascii') 
+            for emb in embeddings_np
+        ]
+        return b64_list

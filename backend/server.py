@@ -24,6 +24,7 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
+import aio_pika
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,9 +62,19 @@ def init_db() -> None:
 _insert_counter: dict[str, int] = {}
 PRUNE_EVERY = 100   # run the expensive DELETE query once per N inserts per camera
 
+_insert_conn = None
+
+def get_insert_conn() -> sqlite3.Connection:
+    global _insert_conn
+    if _insert_conn is None:
+        _insert_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _insert_conn.execute("PRAGMA journal_mode=WAL")
+        _insert_conn.execute("PRAGMA synchronous=OFF")
+    return _insert_conn
+
 def db_insert(camera: str, timestamp: float, payload_json: str) -> None:
     """Persist one telemetry record; prune oldest rows every PRUNE_EVERY inserts."""
-    conn = _db_connect()
+    conn = get_insert_conn()
     conn.execute(
         "INSERT INTO telemetry (camera, timestamp, payload) VALUES (?, ?, ?)",
         (camera, timestamp, payload_json),
@@ -77,7 +88,6 @@ def db_insert(camera: str, timestamp: float, payload_json: str) -> None:
         )
 
     conn.commit()
-    conn.close()
 
 def db_fetch_history(camera: str, minutes: int) -> list:
     """Return time-series rows for a camera covering the last N minutes."""
@@ -133,10 +143,67 @@ manager = ConnectionManager()
 
 latest_state: dict[str, dict] = {}
 
+import os
+AMQP_URL = os.environ.get("AMQP_URL", "amqp://guest:guest@localhost:5672/")
+
+_last_broadcast: dict[str, float] = {}
+
+async def handle_telemetry_message(data: dict):
+    """Processes a telemetry payload from RabbitMQ."""
+    camera    = data.get("camera", "unknown")
+    timestamp = data.get("timestamp", time.time())
+
+    signatures = data.get("signatures", {})
+    track_zones = data.get("track_zones", {})
+
+    if signatures:
+        reid_manager.resolve_identities(camera, signatures)
+    if track_zones:
+        reid_manager.update_global_journeys(camera, track_zones)
+
+    data["global_funnel"]        = reid_manager.get_global_funnel()
+    data["global_transitions"]   = reid_manager.get_global_transitions()
+    data["cross_camera_count"]   = reid_manager.get_cross_camera_count()
+
+    # Strip heavy data before DB insertion and WebSocket broadcast
+    data.pop("signatures", None)
+    data.pop("track_zones", None)
+
+    latest_state[camera] = data
+
+    payload_str = json.dumps(data)
+    await asyncio.to_thread(db_insert, camera, timestamp, payload_str)
+
+    # Throttle WebSocket broadcasts to ~4 FPS per camera to prevent frontend UI lag
+    now = time.time()
+    if now - _last_broadcast.get(camera, 0) > 0.25:
+        _last_broadcast[camera] = now
+        await manager.broadcast({"type": "update", "camera": camera, **data})
+
+async def consume_telemetry():
+    while True:
+        try:
+            connection = await aio_pika.connect_robust(AMQP_URL)
+            async with connection:
+                channel = await connection.channel()
+                queue = await channel.declare_queue("telemetry", durable=True)
+                print(f"Connected to RabbitMQ at {AMQP_URL}")
+
+                async with queue.iterator() as queue_iter:
+                    async for message in queue_iter:
+                        async with message.process():
+                            data = json.loads(message.body.decode())
+                            await handle_telemetry_message(data)
+        except Exception as e:
+            print(f"RabbitMQ consumer error: {e}, retrying in 5s...")
+            await asyncio.sleep(5)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    consumer_task = asyncio.create_task(consume_telemetry())
     yield
+    consumer_task.cancel()
 
 app = FastAPI(title="Multi Cam Analysis API", version="2.0.0", lifespan=lifespan)
 
@@ -170,39 +237,6 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         await manager.disconnect(ws)
 
-@app.post("/telemetry")
-async def receive_telemetry(data: dict):
-    """
-    Ingests a telemetry payload from an edge node.
-    Persists to SQLite and broadcasts to all connected dashboard clients.
-    """
-    camera    = data.get("camera", "unknown")
-    timestamp = data.get("timestamp", time.time())
-
-    signatures = data.get("signatures", {})
-    track_zones = data.get("track_zones", {})
-
-    if signatures:
-        reid_manager.resolve_identities(camera, signatures)
-    if track_zones:
-        reid_manager.update_global_journeys(camera, track_zones)
-
-    data["global_funnel"]        = reid_manager.get_global_funnel()
-    data["global_transitions"]   = reid_manager.get_global_transitions()
-    data["cross_camera_count"]   = reid_manager.get_cross_camera_count()
-
-    # Strip heavy data before DB insertion and WebSocket broadcast
-    data.pop("signatures", None)
-    data.pop("track_zones", None)
-
-    latest_state[camera] = data
-
-    payload_str = json.dumps(data)
-    await asyncio.to_thread(db_insert, camera, timestamp, payload_str)
-
-    await manager.broadcast({"type": "update", "camera": camera, **data})
-
-    return {"status": "ok", "connected_clients": manager.count}
 
 @app.get("/snapshot")
 async def get_snapshot():
