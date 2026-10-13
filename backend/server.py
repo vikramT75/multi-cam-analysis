@@ -19,6 +19,8 @@ Run:
 
 import asyncio
 import json
+import logging
+import os
 import sqlite3
 import time
 from collections import defaultdict
@@ -30,9 +32,19 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from reid_manager import ReIDManager
+try:
+    from reid_manager import ReIDManager
+except ImportError:
+    from backend.reid_manager import ReIDManager
 
-DB_PATH = Path("data/analytics.db")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+DB_PATH = Path(os.environ.get("DB_PATH", "data/analytics.db"))
 reid_manager = ReIDManager()
 
 MAX_ROWS_PER_CAMERA = 7_200
@@ -143,7 +155,6 @@ manager = ConnectionManager()
 
 latest_state: dict[str, dict] = {}
 
-import os
 AMQP_URL = os.environ.get("AMQP_URL", "amqp://guest:guest@localhost:5672/")
 
 _last_broadcast: dict[str, float] = {}
@@ -187,7 +198,7 @@ async def consume_telemetry():
             async with connection:
                 channel = await connection.channel()
                 queue = await channel.declare_queue("telemetry", durable=True)
-                print(f"Connected to RabbitMQ at {AMQP_URL}")
+                logger.info("Connected to RabbitMQ at %s", AMQP_URL)
 
                 async with queue.iterator() as queue_iter:
                     async for message in queue_iter:
@@ -195,7 +206,7 @@ async def consume_telemetry():
                             data = json.loads(message.body.decode())
                             await handle_telemetry_message(data)
         except Exception as e:
-            print(f"RabbitMQ consumer error: {e}, retrying in 5s...")
+            logger.warning("RabbitMQ consumer error: %s, retrying in 5s...", e)
             await asyncio.sleep(5)
 
 @asynccontextmanager

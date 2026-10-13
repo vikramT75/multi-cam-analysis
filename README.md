@@ -118,27 +118,23 @@ Cross-camera person re-identification is performed in five stages:
 pip install -r requirements.txt
 ```
 
-### 2 - Start RabbitMQ
+### 2 - Start RabbitMQ & Central Server (Docker)
 
 ```bash
-docker compose up -d rabbitmq
+docker compose up -d
 ```
+*(Starts both RabbitMQ and the FastAPI backend container with automatic health-checking)*
 
-### 3 - Start the central server
+*(Optional: to run the server locally without Docker instead: `uvicorn backend.server:app --host 0.0.0.0 --port 8000`)*
 
-```bash
-uvicorn backend.server:app --host 0.0.0.0 --port 8000
-```
-*(Or run both RabbitMQ and backend via `docker compose up -d`)*
-
-### 4 - Launch edge detectors one per camera
+### 3 - Launch edge detectors one per camera
 
 ```bash
 python src/detector.py --config config.yaml
 python src/detector.py --config config_cam2.yaml
 ```
 
-### 5 - Open the dashboard
+### 4 - Open the dashboard
 
 Navigate to `frontend/dashboard.html` in a browser (or serve it from any static file server). The page connects to the WebSocket at `ws://localhost:8000/ws` automatically.
 
