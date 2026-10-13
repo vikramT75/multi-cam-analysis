@@ -1,8 +1,8 @@
 # Multi-Camera Analytics
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python) ![YOLOv11](https://img.shields.io/badge/YOLO-v11-darkgreen?logo=yolo) ![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi) ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python) ![YOLOv11](https://img.shields.io/badge/YOLO-v11-darkgreen?logo=yolo) ![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi) ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3.x-FF6600?logo=rabbitmq) ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch)
 
-A real-time, multi-camera people-tracking and analytics system. Each camera runs an independent edge inference pipeline (YOLOv11 + ByteTrack + polygon zone analytics + MobileNetV2 ReID embeddings) and streams telemetry to a central FastAPI server that performs cross-camera re-identification, persists data to SQLite, and broadcasts live updates to a WebSocket-driven dashboard.
+A real-time, multi-camera people-tracking and analytics system. Each camera runs an independent edge inference pipeline (YOLOv11 + ByteTrack + polygon zone analytics + MobileNetV2 ReID embeddings) and streams telemetry via a RabbitMQ broker to a central FastAPI server that performs cross-camera re-identification, persists data to SQLite, and broadcasts live updates to a WebSocket-driven dashboard.
 
 ---
 
@@ -15,8 +15,12 @@ flowchart LR
         C2["Aisle_Cam\ndetector.py\nYOLOv11 · ByteTrack\nZoneAnalyzer · ReIDExtractor"]
     end
 
+    subgraph Broker["Message Broker"]
+        Q["RabbitMQ\nQueue: telemetry"]
+    end
+
     subgraph Server["Central Server (FastAPI)"]
-        T["/telemetry\nPOST"]
+        C["aio_pika Consumer"]
         RM["ReIDManager\nCosine Similarity Gallery\nEMA Update · Global Journeys"]
         DB["SQLite WAL\nPersistence"]
         WS["WebSocket /ws\nBroadcast"]
@@ -26,9 +30,10 @@ flowchart LR
         D["dashboard.html\nChart.js · Zone Cards\nAlert Panel"]
     end
 
-    C1 -- "HTTP POST telemetry\n(tracks, zones, signatures)" --> T
-    C2 -- "HTTP POST telemetry\n(tracks, zones, signatures)" --> T
-    T --> RM
+    C1 -- "AMQP telemetry\n(tracks, zones, signatures)" --> Q
+    C2 -- "AMQP telemetry\n(tracks, zones, signatures)" --> Q
+    Q --> C
+    C --> RM
     RM --> DB
     RM --> WS
     WS --> D
@@ -47,8 +52,8 @@ flowchart LR
 | ByteTrack | Multi-object tracking; assigns stable per-camera track IDs across frames |
 | [`spatial_analytics.py`](src/spatial_analytics.py) - `ZoneAnalyzer` | Polygon zone membership, per-track dwell time, occupancy counts, dwell-threshold alerts |
 | [`journey_tracker.py`](src/journey_tracker.py) - `JourneyTracker` | Per-camera zone transition tracking; builds funnel and Sankey diagram data |
-| [`reid_extractor.py`](src/reid_extractor.py) - `ReIDExtractor` | MobileNetV2 classifier head replaced with `Identity`; extracts 1280-d L2-normalised embeddings from person bounding-box crops every 15 frames; returns JSON-serialisable lists |
-| [`telemetry.py`](src/telemetry.py) - `TelemetrySender` | Background-thread HTTP POST to the FastAPI server |
+| [`reid_extractor.py`](src/reid_extractor.py) - `ReIDExtractor` | MobileNetV2 classifier head replaced with `Identity`; extracts 1280-d L2-normalised embeddings from person bounding-box crops every 15 frames; returns base64-encoded strings |
+| [`telemetry.py`](src/telemetry.py) - `TelemetrySender` | Background-thread AMQP publisher to RabbitMQ |
 | [`video_streamer.py`](src/video_streamer.py) - `VideoStreamer` | Threaded ring-buffer; decouples frame capture from inference |
 
 Each camera is configured independently via its own YAML file (see [Configuration Schema](#configuration-schema)).
@@ -59,7 +64,7 @@ Each camera is configured independently via its own YAML file (see [Configuratio
 
 | Module | Role |
 |---|---|
-| [`server.py`](backend/server.py) | FastAPI application; receives telemetry, drives ReIDManager, manages WebSocket connections |
+| [`server.py`](backend/server.py) | FastAPI application; consumes telemetry from RabbitMQ, drives ReIDManager, manages WebSocket connections |
 | [`reid_manager.py`](backend/reid_manager.py) - `ReIDManager` | Maintains a cross-camera gallery of global_id to embedding; matches incoming embeddings via cosine similarity; assigns new global IDs or merges existing ones; tracks global zone transitions |
 | SQLite WAL mode | Persists telemetry snapshots and history for cold-start hydration and time-series queries |
 
@@ -79,7 +84,7 @@ Cross-camera person re-identification is performed in five stages:
 
 1. **Embedding extraction** - On the edge node, `ReIDExtractor` crops each tracked bounding box and passes it through a headless MobileNetV2 network ImageNet pre-trained, classifier replaced with `nn.Identity`. The resulting 1280-dimensional feature vector is L2-normalised. Extraction runs every **15 frames** per track to balance accuracy and throughput.
 
-2. **Telemetry transmission** - The normalised embedding is serialised as a JSON list and included in the `signatures` field of the telemetry payload POSTed to `/telemetry`.
+2. **Telemetry transmission** - The normalised embedding is serialised as a base64-encoded string and included in the `signatures` field of the telemetry payload published to the RabbitMQ `telemetry` queue.
 
 3. **Gallery matching** - The server's `ReIDManager` computes **cosine similarity** between the incoming embedding and every embedding in the cross-camera gallery.
 
@@ -95,10 +100,10 @@ Cross-camera person re-identification is performed in five stages:
 
 ## API Specification
 
-| Method | Endpoint | Description |
+| Protocol / Method | Endpoint / Queue | Description |
 |---|---|---|
 | `WS` | `/ws` | WebSocket - live analytics broadcast to the dashboard |
-| `POST` | `/telemetry` | Ingest telemetry from edge nodes tracks, zone states, ReID embeddings |
+| `AMQP` | `telemetry` queue | Asynchronous ingest from edge nodes (tracks, zone states, ReID signatures) |
 | `GET` | `/snapshot` | Full current state for cold-start dashboard hydration |
 | `GET` | `/history?camera=X&minutes=60` | Time-series occupancy data from SQLite |
 | `GET` | `/cameras` | List of active cameras seen by the server |
@@ -113,20 +118,27 @@ Cross-camera person re-identification is performed in five stages:
 pip install -r requirements.txt
 ```
 
-### 2 - Start the central server
+### 2 - Start RabbitMQ
+
+```bash
+docker compose up -d rabbitmq
+```
+
+### 3 - Start the central server
 
 ```bash
 uvicorn backend.server:app --host 0.0.0.0 --port 8000
 ```
+*(Or run both RabbitMQ and backend via `docker compose up -d`)*
 
-### 3 - Launch edge detectors one per camera
+### 4 - Launch edge detectors one per camera
 
 ```bash
 python src/detector.py --config config.yaml
 python src/detector.py --config config_cam2.yaml
 ```
 
-### 4 - Open the dashboard
+### 5 - Open the dashboard
 
 Navigate to `frontend/dashboard.html` in a browser (or serve it from any static file server). The page connects to the WebSocket at `ws://localhost:8000/ws` automatically.
 
@@ -148,10 +160,26 @@ analytics:
       color: [0, 255, 150]
       alert_dwell_seconds: 180
       polygon:
-        - [60,  90]
-        - [540, 90]
-        - [540, 280]
-        - [60,  280]
+        - [60,  10]
+        - [540, 10]
+        - [540, 190]
+        - [60,  190]
+    - name: "Stall"
+      color: [255, 215, 0]
+      alert_dwell_seconds: 480
+      polygon:
+        - [120, 375]
+        - [290, 375]
+        - [290, 480]
+        - [120, 480]
+    - name: "Seating"
+      color: [0, 200, 255]
+      alert_dwell_seconds: 900
+      polygon:
+        - [255, 225]
+        - [400, 225]
+        - [400, 340]
+        - [255, 340]
     - name: "Shop_Entry"
       color: [255, 100, 0]
       alert_dwell_seconds: 300
